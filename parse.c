@@ -3,162 +3,156 @@
 #include <stdlib.h>
 #include "list.h"
 #include "sh.h"
+#include "common.h"
 
 /* check last symbol for '&' and replace it */
 static int check_bck(char *s)
 {
-	size_t len;
-	int i;
+	ssize_t len;
 
-	len = strlen(s);
+	len = strlen(s) - 1;
 
-	if (len == 1)
-		return 0;
+	while (len > -1) {
+		if (s[len] == '&') {
+			/* trim command */
+			s[len] = '\0';
+			return 1;
+		}
 
-	i = len - 1;
-
-	/* skip all spaces at the end of line */
-	while (s[i] == ' ') i--;
-
-	if (s[i] == '&') {
-		s[i] = ' ';
-		return 1;
+		if (s[len] != ' ')
+			break;
+		len--;
 	}
 
 	return 0;
 }
 
+static void add_task_item(struct task **task_ptr, char *str)
+{
+	if (*task_ptr == NULL) {
+		struct task *tmp;
+
+		tmp = malloc(sizeof *tmp);
+		ASSERT_ERR("malloc failed\n", (tmp == NULL));
+		memset(tmp, 0, sizeof *tmp);
+		tmp->name = calloc(1, strlen(str) + 1);
+		ASSERT_ERR("calloc failed\n", (tmp->name == NULL));
+		strcpy(tmp->name, str);
+		tmp->argc = 1;
+		tmp->args[0] = tmp->name;
+#ifdef	DEBUG
+		printf("set name:%s\n", str);
+#endif
+		*task_ptr = tmp;
+	} else {
+		struct task *tmp;
+
+		tmp = *task_ptr;
+		ASSERT_ERR("too many args\n", (tmp->argc == MAX_ARGS));
+		tmp->args[tmp->argc] = str;
+#ifdef	DEBUG
+		printf("set arg:%s\n", str);
+#endif
+		tmp->argc++;
+	}
+}
+
+static struct task *parse_command(char *command)
+{
+        char *t;
+        char *p;
+        int cmd_flag;
+	int argc;
+	struct task *new_task;
+
+        t = command;
+        p = t;
+        cmd_flag = 0;
+	argc = 0;
+	new_task = NULL;
+
+        while (*t != '\0') {
+                if (*t != ' ') {
+                        char *space;
+
+                        space = strchr(t, ' ');
+
+                        if (space != NULL) {
+                                *space = '\0';
+#ifdef	DEBUG
+                                printf("cmd elem:#%s#\n", t);
+#endif
+				add_task_item(&new_task, t);
+                        } else {
+#ifdef	DEBUG
+                                printf("last:#%s#\n", t);
+#endif
+				add_task_item(&new_task, t);
+                                break;
+                        }
+                        t = space;
+			t++;
+                        continue;
+                }
+                t++;
+        }
+
+	return new_task;
+}
+
 void parse(char *s, struct list_head *tasks, int *pipes_num, int *bck)
 {
-	char *p;
-	char *p1;
-	int prev_space;
-	int prev_pipe;
-	int name;
-	struct task *task;
-	int argcnt;
+        int i;
+        char *t;
+        char *p;
 
+        i = 0;
+        t = &s[0];
+        p = t;
 	*bck = check_bck(s);
-#ifdef DEBUG
-	printf("************************\n");
-	printf("%s\n", s);
-	printf("************************\n");
-#endif
-	p = &s[0];
-	p1 = p;
-	prev_space = 1;
-	/* expression cannot begin with pipe */
-	prev_pipe = 1;
-	name = 0;
-	argcnt = 1;
-	task = NULL;
 
-	while(1) {
-		if (*p1 == '\0') {
-			if (name == 0) {
-#ifdef DEBUG
-				printf("end name: ");
-#endif
-				if (task == NULL)
-					task = malloc (sizeof *task);
+        while (1) {
 
-				task->name = p;
-				task->args[0] = p;
-				name = 1;
-			} else {
-#ifdef DEBUG
-				printf("end arg: ");
-#endif
-				task->args[argcnt] = p;
-				argcnt++;
-			}
-			list_add_tail(&task->next, tasks);
-#ifdef DEBUG
-			printf("end:%s#\n", task->name);
-#endif
-			break;
-		}
+                if ((*t == '|') || (*t == '\0')) {
+                        char tmp;
+			struct task *new_task;
 
-		if ((*p1 == ' ') || (*p1 == '|')) {
-			/* space found */
-			if (*p1 == ' ') {
-				if (prev_space == 1) {
-					/* previous symbol was space, ignore */
-					p1++;
-					p = p1;
-					continue;
-				} else
-					prev_space = 1;
-			}
+                        tmp = *t;
+                        *t = '\0';
+                        new_task = parse_command(p);
 
-			/* pipe delimiter */
-			if (*p1 == '|') {
-				if (prev_pipe == 1) {
-					/* previous symbols was pipe, fail */
-					printf("syntax error!\n");
-					exit(1);
-				}
+			if (*bck)
+				new_task->flag = BG;
+			else
+				new_task->flag = FG;
 
-				/* ok, remember pipe symbol */
-				prev_pipe = 1;
-			} else {
-				/* space delimiter */
-				prev_pipe = 0;
-			}
+			list_add_tail(&new_task->next, tasks);
 
-
-			/* split line */
-			*p1 = '\0';
-			/* print lexem */
-			if (strlen(p) != 0) {
-				if (name == 0) {
-					if (task == NULL) {
-						task = malloc(sizeof *task);
-
-						if (task == NULL) {
-							printf("malloc failed!\n");
-							exit(1);
-						}
-
-						task->name = p;
-						task->args[0] = p;
-					}
-#ifdef DEBUG
-					printf("name: ");
-#endif
-					name = 1;
-				} else {
-#ifdef DEBUG
-					printf("arg: ");
-#endif
-					task->args[argcnt] = p;
-					argcnt++;
-				}
-#ifdef DEBUG
-				printf("%s", p);
-				printf("%c\n", '#');
-#endif
-			} else {
-#ifdef DEBUG
-				printf("pipe!\n");
-#endif
-				list_add_tail(&task->next, tasks);
-				name = 0;
-				argcnt = 1;
-				task = NULL;
+                        if (tmp == '|') {
 				(*pipes_num)++;
-			}
 
-			p1++;
-			p = p1;
+				/* dirty hack:disable background for chains */
+				*bck = 0;
 
-			continue;
-		}
+                                t++;
+                                p = t;
+                                continue;
+                        } else
+                                break;
+                }
 
-		/* symbol found, reset flags */
-		prev_space = 0;
-		prev_pipe = 0;
+		/* NI */
+                if (0 && (*t == '>')) {
+                        char *end;
 
-		p1++;
-	};
+                        end = strchr(t, ';');
+
+                        if (end != NULL)
+                                *end = '\0';
+                }
+
+                t++;
+        };
+
+	return;
 }
