@@ -11,7 +11,7 @@ void list_add_between(struct list_head *new,
 			     struct list_head *prev,
 			     struct list_head *next);
 void list_add_tail(struct list_head *new, struct list_head *head);
-void __delete_item(struct list_head *element);
+void delete_item(struct list_head *element);
 static inline int list_is_empty(struct list_head *head)
 {
 	return (head->next == head);

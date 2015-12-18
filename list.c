@@ -2,7 +2,7 @@
 #include <stdio.h>
 #include <sys/mman.h>
 
-void __delete_item(struct list_head *element)
+void delete_item(struct list_head *element)
 {
 	struct list_head *curr_next;
 	struct list_head *curr_prev;

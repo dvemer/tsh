@@ -96,7 +96,7 @@ static void hndl_chld1(int code, siginfo_t *si, void *arg)
 			fprintf(stderr, "error %s\n", strerror(errno));
 	}
 
-	__delete_item(&task->next);
+	delete_item(&task->next);
 	free(task);
 	tasks_num--;
 
@@ -528,17 +528,35 @@ static void do_backspace(void)
 
 #define	CURSOR_UP	1
 #define	CURSOR_DOWN	2
-/* clear current input string */
-static void flush_cmd(void)
+
+static void move_cur_end(void)
+{
+	int tmp_cursor_pos;
+	char s[] = {0x1b, '[', '1', 'C'};
+
+	tmp_cursor_pos = cursor_pos;
+
+	while (tmp_cursor_pos < strlen(cmd)) {
+		write(1, s, sizeof s);
+		tmp_cursor_pos++;
+	}
+}
+
+static void erase_cmd(void)
 {
 	ssize_t cmd_len;
 	int i;
 
 	cmd_len = strlen(cmd);
+	move_cur_end();
 
 	for(i=0;i < cmd_len;i++)
 		do_backspace();
-
+}
+/* clear current input string */
+static void flush_cmd(void)
+{
+	erase_cmd();
 	memset(cmd, 0, CMD_LEN);
 }
 
@@ -588,6 +606,7 @@ static void cmd_up_down(int action)
 	/* print next command */
 	write(1, curr_cmd->cmd_string, strlen(curr_cmd->cmd_string));
 	strcpy(cmd, curr_cmd->cmd_string);
+	cursor_pos = strlen(cmd);
 
 	if (action == CMD_UP)
 		set_up_cmd();
@@ -681,6 +700,18 @@ static void dump_history(void)
 	}
 }
 
+static void erase_word(void)
+{
+	size_t new_len;
+
+	/* erase previous input */
+	erase_cmd();
+	new_len = strlen(cmd) + 1 - cursor_pos;
+	memmove(cmd, &cmd[cursor_pos], new_len);
+	write(1, cmd, new_len);
+	cursor_pos = strlen(cmd);
+}
+
 static int read_cmd(void)
 {
 	char c;
@@ -716,6 +747,12 @@ static int read_cmd(void)
 			continue;
 		}
 
+		/* word erase: erase word */
+		if (c == tattr.c_cc[VWERASE]) {
+			erase_word();
+			continue;
+		}
+
 		/* backspace */
 		if (c == 0x8) {
 			if (cursor_pos) {
@@ -739,6 +776,8 @@ static int read_cmd(void)
 		if (c == 0xA) {
 			break;
 		}
+
+
 	}
 
 	return 0;
