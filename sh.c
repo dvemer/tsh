@@ -15,6 +15,7 @@
 #include "sh.h"
 #include "common.h"
 #include "acompl.h"
+#include "term.h"
 
 #define CMD_LEN 4096
 
@@ -235,6 +236,10 @@ static void init_prompt(void)
 	strcat(prompt, ">");
 }
 
+static void print_prompt(void)
+{
+	write(1, prompt, strlen(prompt));
+}
 
 #ifdef DEBUG
 static void dump_tasks(void)
@@ -700,16 +705,101 @@ static void dump_history(void)
 	}
 }
 
+/*
+ * erase word: find nearest space to the
+ * left from current cursor position and
+ * delete all char from it to cursor
+ * position.
+*/
+static int nearest_space(void)
+{
+	int i;
+	int flag;
+
+	i = cursor_pos;
+	flag = 0;
+
+	while (i > -1) {
+		if (cmd[i] == ' ') {
+			if (flag != 0)
+				return i;
+		} else {
+			flag = 1;
+		}
+
+		i--;
+	};
+
+	if (i == -1)
+		i = 0;
+
+	return i;
+}
 static void erase_word(void)
 {
 	size_t new_len;
+	int nearest_idx;
 
-	/* erase previous input */
-	erase_cmd();
-	new_len = strlen(cmd) + 1 - cursor_pos;
-	memmove(cmd, &cmd[cursor_pos], new_len);
-	write(1, cmd, new_len);
-	cursor_pos = strlen(cmd);
+	nearest_idx = nearest_space();
+	new_len = strlen(cmd) - cursor_pos + 1;
+	memmove(&cmd[nearest_idx], &cmd[cursor_pos], new_len);
+	t_erase_line();
+	print_prompt();
+	write(1, cmd, strlen(cmd));
+}
+
+static void insert_ch(char c)
+{
+	if (cursor_pos < strlen(cmd)) {
+		/* insert char to command string */
+		memmove(&cmd[cursor_pos + 1], &cmd[cursor_pos],
+		strlen(cmd) - cursor_pos + 1);
+		cmd[cursor_pos] = c;
+#if 0
+		/* erase whole line */
+		t_erase_line();
+		/* move cursor backward */
+		t_move_cur_back(strlen(cmd) + strlen(prompt));
+		/* print prompt again */
+		print_prompt();
+		/* print cmd again */
+		write(1, cmd, strlen(cmd));
+		cursor_pos = strlen(cmd);
+#endif
+		write(1, &cmd[cursor_pos], strlen(cmd) - cursor_pos + 1);
+		cursor_pos = strlen(cmd);
+	} else {
+		/* cursor at last position */
+		cmd[cursor_pos++] = c;
+		write(1, &c, sizeof c);
+	}
+}
+
+static void handle_backspace(void)
+{
+	if (cursor_pos < strlen(cmd)) {
+		size_t len;
+		char bspace;
+
+		bspace = '\b';
+		len = strlen(cmd);
+		/* shift command string and reprint it */
+		memmove(&cmd[cursor_pos - 1], &cmd[cursor_pos],
+		len - cursor_pos + 1);
+		cmd[len - 1] = '\0';
+		/* move cursor backward on pos */
+		write(1, &space, sizeof space);
+		/* erase line until it's end */
+		t_erase_end();
+		/* reprint rest of command */
+		write(1, &cmd[cursor_pos - 1], len - cursor_pos);
+		cursor_pos = strlen(cmd);
+	} else {
+		/* simple case, just print backspace */
+		do_backspace();
+		cursor_pos--;
+		cmd[cursor_pos] = '\0';
+	}
 }
 
 static int read_cmd(void)
@@ -749,20 +839,16 @@ static int read_cmd(void)
 
 		/* word erase: erase word */
 		if (c == tattr.c_cc[VWERASE]) {
-			erase_word();
+			//erase_word();
 			continue;
 		}
 
 		/* backspace */
 		if (c == 0x8) {
-			if (cursor_pos) {
-				do_backspace();
-				cmd[cursor_pos] = '\0';
-				cursor_pos--;
-			}
+			if (cursor_pos)
+				handle_backspace();
 			continue;
 		}
-
 
 		/* esc char - some ANSI code */
 		if (c == 0x1B) {
@@ -770,8 +856,7 @@ static int read_cmd(void)
 			continue;
 		}
 
-		write(1, &c, sizeof c);
-		cmd[cursor_pos++] = c;
+		insert_ch(c);
 
 		if (c == 0xA) {
 			break;
@@ -857,7 +942,7 @@ int main(void)
 	while (1) {
 		char *p;
 
-		write(1, prompt, strlen(prompt));
+		print_prompt();
 		if (read_cmd() < 0)
 			continue;
 
