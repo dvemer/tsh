@@ -17,7 +17,7 @@
 #include "acompl.h"
 #include "term.h"
 
-#define CMD_LEN 4096
+#define CMD_ALLOC_LEN 1024
 
 extern char **environ;
 /* prompt string */
@@ -28,6 +28,7 @@ static int pipes_num;
 static int tasks_num;
 /* input command */
 static char *cmd = NULL;
+static int cmd_len;
 static int cursor_pos;
 /* bg/fg job flag */
 static int bck;
@@ -562,7 +563,7 @@ static void erase_cmd(void)
 static void flush_cmd(void)
 {
 	erase_cmd();
-	memset(cmd, 0, CMD_LEN);
+	memset(cmd, 0, cmd_len);
 }
 
 static void set_up_cmd(void)
@@ -748,8 +749,18 @@ static void erase_word(void)
 	write(1, cmd, strlen(cmd));
 }
 
+static void realloc_cmd(int new_cursor_pos)
+{
+	if (new_cursor_pos == cmd_len) {
+		cmd_len += CMD_ALLOC_LEN;
+		cmd = realloc(cmd, cmd_len);
+	}
+}
+
 static void insert_ch(char c)
 {
+	realloc_cmd(cursor_pos + 1);
+
 	if (cursor_pos < strlen(cmd)) {
 		/* insert char to command string */
 		memmove(&cmd[cursor_pos + 1], &cmd[cursor_pos],
@@ -788,7 +799,7 @@ static void handle_backspace(void)
 		len - cursor_pos + 1);
 		cmd[len - 1] = '\0';
 		/* move cursor backward on pos */
-		write(1, &space, sizeof space);
+		write(1, &bspace, sizeof bspace);
 		/* erase line until it's end */
 		t_erase_end();
 		/* reprint rest of command */
@@ -807,7 +818,7 @@ static int read_cmd(void)
 	char c;
 	int tab_cnt;
 
-	memset(cmd, 0, CMD_LEN);
+	memset(cmd, 0, cmd_len);
 	tab_cnt = 0;
 	cursor_pos = 0;
 
@@ -880,16 +891,16 @@ static int read_cmd(void)
 {
 	int n;
 
-	memset(cmd, 0, CMD_LEN);
-	n = read(0, cmd, CMD_LEN);
+	memset(cmd, 0, cmd_len);
+	n = read(0, cmd, cmd_len);
 
 	if (n < -1) {
 		fprintf(stderr, "read:%i %s\n", n, strerror(errno));
 		return -1;
 	}
 
-	if (cmd[CMD_LEN - 1] != '\0') {
-		fprintf(stderr, "Too long cmd, max is %i\n", CMD_LEN);
+	if (cmd[cmd_len - 1] != '\0') {
+		fprintf(stderr, "Too long cmd, max is %i\n", cmd_len);
 		return -1;
 	}
 
@@ -900,7 +911,8 @@ static int read_cmd(void)
 static void alloc_cmd(void)
 {
 	/* default cmd len is 4096 */
-	cmd = malloc(CMD_LEN);
+	cmd = malloc(CMD_ALLOC_LEN);
+	cmd_len = CMD_ALLOC_LEN;
 	ASSERT_ERR ("malloc failed\n", (cmd == NULL));
 }
 
