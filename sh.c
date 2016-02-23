@@ -33,7 +33,6 @@ static int cmd_len;
 static int cursor_pos;
 /* bg/fg job flag */
 static int bck;
-static int will_wait;
 /* shell history variables */
 static struct list_head history = {&history, &history};
 static struct history_ent *curr_cmd;
@@ -73,11 +72,17 @@ static struct task *get_task(int pid)
 
 static void hndl_chld1(int code, siginfo_t *si, void *arg)
 {
-	struct task *task;
-	int status;
 	int pid;
+	int status;
+	struct task *task;
 
-	pid = wait(&status);
+	pid = waitpid(-1, &status, WUNTRACED | WCONTINUED);
+
+	if (WIFSTOPPED(status))
+		printf("task %i pid stopped!\n", 0);
+
+	if (WIFEXITED(status))
+		printf("task %i exited!\n", 0);
 #ifdef DEBUG
 	printf("task %i done!\n", pid);
 #endif
@@ -85,29 +90,6 @@ static void hndl_chld1(int code, siginfo_t *si, void *arg)
 
 	tasks_num--;
 	return;
-
-	if (task->flag & BG)
-		printf("[%i] %s ready\n", pid, task->name);
-
-	if (task->in_pipe) {
-#ifdef DEBUG
-		fprintf(stderr, "%s closing in %i\n", task->name, *task->in_pipe);
-#endif
-		if (close(*task->in_pipe))
-			fprintf(stderr, "error %s\n", strerror(errno));
-	}
-
-	if (task->out_pipe) {
-#ifdef DEBUG
-		fprintf(stderr, "%s closing out %i\n", task->name, *task->out_pipe);
-#endif
-		if (close(*task->out_pipe))
-			fprintf(stderr, "error %s\n", strerror(errno));
-	}
-
-	delete_item(&task->next);
-	free(task);
-	tasks_num--;
 }
 
 static void sighup_jobs(void)
@@ -279,7 +261,6 @@ static void parse_cmd(void)
 	tasks.prev = &tasks;
 	tasks.next = &tasks;
 	curr_job = parse(cmd, &pipes_num, &bck);
-	will_wait = !bck;
 #ifdef DEBUG
 	printf("back:%i\n", bck);
 	printf("pipes:%i\n", pipes_num);
@@ -326,6 +307,7 @@ static	void run_task(struct task *task)
 
 		if (pid == 0) {
 			setpgid(0, 0);
+			tcsetpgrp(0, getpid());
 			set_default_sig();
 			execve(full_path, task->args, environ);
 		}
@@ -349,39 +331,41 @@ static	void run_task(struct task *task)
 			/* child */
 			setpgid(0, 0);
 			set_default_sig();
+			tcsetpgrp(0, getpid());
 			dup2(left_pipe[1], 1);
 			close(left_pipe[0]);
 			execve(full_path, task->args, environ);
 		}
-	}
-
-	/* create right pipe */
-	if (task->is_last == 0)
-		pipe(right_pipe);
-	pid = fork();
-#ifdef	DEBUG
-	printf ("task %i is %i\n", task->idx, pid);
-#endif
-	if (pid == -1) {
-		fprintf(stderr, "Failed to fork %s\n", strerror(errno));
-		exit(1);
-	}
-
-	if (pid) {
-		close(left_pipe[0]);
-		close(left_pipe[1]);
 	} else {
-		setpgid(0, job_gid);
+		/* create right pipe */
 		if (task->is_last == 0)
-			dup2(right_pipe[1], 1);
+			pipe(right_pipe);
+		pid = fork();
+#ifdef	DEBUG
+		printf ("task %i is %i\n", task->idx, pid);
+#endif
+		if (pid == -1) {
+			fprintf(stderr, "Failed to fork %s\n", strerror(errno));
+			exit(1);
+		}
 
-		dup2(left_pipe[0], 0);
-		close(left_pipe[1]);
-		execve(full_path, task->args, environ);
+		if (pid) {
+			close(left_pipe[0]);
+			close(left_pipe[1]);
+		} else {
+			setpgid(0, job_gid);
+			tcsetpgrp(0, getpid());
+			if (task->is_last == 0)
+				dup2(right_pipe[1], 1);
+
+			dup2(left_pipe[0], 0);
+			close(left_pipe[1]);
+			execve(full_path, task->args, environ);
+		}
+
+		memcpy(left_pipe, right_pipe, sizeof (left_pipe));
+		return;
 	}
-
-	memcpy(left_pipe, right_pipe, sizeof (left_pipe));
-	return;
 err:
 	fprintf(stderr, "Failed to fork %s\n", strerror(errno));
 	exit(1);
@@ -673,7 +657,9 @@ static void load_history(void)
 	while ((ch = fgetc(hist_file)) != EOF) {
 		if (ch == '\n') {
 			add_to_history(hist_string);
-			printf("ADD: %s\n", hist_string);
+#ifdef	DEBUG
+			printf("add to history: %s\n", hist_string);
+#endif
 			memset(hist_string, 0, max_hist_strlen);
 			pos = 0;
 			continue;
@@ -1030,7 +1016,7 @@ int main(void)
 		/* now exec list of commands */
 		exec_cmd();
 
-		if (will_wait == 1) {
+		if (bck == 0) {
 			while (1) {
 				pause();
 
