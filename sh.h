@@ -36,8 +36,16 @@ struct task {
 	int pid;
 	int idx;
 	int flag;
+	int is_last;
 	struct list_head next; /* for pipe convair */
 };
 
-void parse(char *s, struct list_head *tasks, int *pipes_num, int *bck);
+struct job {
+	char *name;
+	int bckg;
+	struct list_head tasks;
+	struct list_head next;
+};
+
+struct job *parse(char *s, int *pipes_num, int *bck);
 #endif

@@ -1,2 +1,3 @@
+CFLAGS = -Wall -g3 -DTERMNC 
 tsh:
-	cc term.c acompl.c parse.c list.c sh.c -I. -o sh -Wall -g3 -DTERMNC
+	gcc term.c acompl.c parse.c list.c sh.c -I. -o sh $(CFLAGS)

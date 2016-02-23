@@ -11,6 +11,7 @@
 #include <dirent.h>
 #include <errno.h>
 #include <time.h>
+#include <sys/ucontext.h>
 #include "list.h"
 #include "sh.h"
 #include "common.h"
@@ -33,14 +34,14 @@ static int cursor_pos;
 /* bg/fg job flag */
 static int bck;
 static int will_wait;
-/* pipes array */
-static int *pipes;
 /* shell history variables */
 static struct list_head history = {&history, &history};
 static struct history_ent *curr_cmd;
 static int history_sz = 0;
 int builtins_num;
 
+static struct job *curr_job;
+struct list_head jobs = {&jobs, &jobs};
 static void try_chdir(void);
 static void dump_history(void);
 static void do_exit(void);
@@ -77,7 +78,13 @@ static void hndl_chld1(int code, siginfo_t *si, void *arg)
 	int pid;
 
 	pid = wait(&status);
+#ifdef DEBUG
+	printf("task %i done!\n", pid);
+#endif
 	task = get_task(pid);
+
+	tasks_num--;
+	return;
 
 	if (task->flag & BG)
 		printf("[%i] %s ready\n", pid, task->name);
@@ -101,9 +108,6 @@ static void hndl_chld1(int code, siginfo_t *si, void *arg)
 	delete_item(&task->next);
 	free(task);
 	tasks_num--;
-
-	if (tasks_num == 0)
-		free(pipes);
 }
 
 static void sighup_jobs(void)
@@ -131,9 +135,18 @@ static void hndl_sighup(int code)
 
 #ifdef	DEBUG
 /* only for development/debug purposes */
-static void hndl_ssegv(int code)
+static void sigsegv_action(int code, siginfo_t *si, void *ctx)
 {
-	printf("%s\n", __func__);
+	ucontext_t *ctx_ptr;
+
+	ctx_ptr = ctx;
+	printf("segmentation fault!\n");
+	printf("Context:\n");
+#ifdef __FreeBSD__
+	printf("RIP: %08lX\n", ctx_ptr->uc_mcontext.mc_rip);
+#else
+	printf("RIP: %08llX\n", ctx_ptr->uc_mcontext.gregs[16]);
+#endif
 	getchar();
 }
 #endif
@@ -248,7 +261,7 @@ static void dump_tasks(void)
 	struct list_head *pos;
 
 	printf("tasks:\n");
-	list_for_each(pos, &tasks) {
+	list_for_each(pos, &curr_job->tasks) {
 		struct task *task;
 
 		task = get_elem(pos, struct task, next);
@@ -265,7 +278,8 @@ static void parse_cmd(void)
 	pipes_num = 0;
 	tasks.prev = &tasks;
 	tasks.next = &tasks;
-	parse(cmd, &tasks, &pipes_num, &bck);
+	curr_job = parse(cmd, &pipes_num, &bck);
+	will_wait = !bck;
 #ifdef DEBUG
 	printf("back:%i\n", bck);
 	printf("pipes:%i\n", pipes_num);
@@ -276,176 +290,116 @@ static void parse_cmd(void)
 #endif
 }
 
-static void create_pipes(void)
+static void set_default_sig(void)
 {
-	int i;
-	int *tmp_pipes;
-
-	pipes = malloc(pipes_num * (sizeof (int) * 2));
-	ASSERT_ERR("malloc failed\n", (pipes == NULL));
-
-	tmp_pipes = pipes;
-
-	for(i = 0;i < pipes_num;i++, tmp_pipes += 2) {
-		pipe(tmp_pipes);
-#ifdef DEBUG
-		fprintf(stderr, "pipe: in %i out %i\n",
-			tmp_pipes[0], tmp_pipes[1]);
-#endif
-	}
+	signal(SIGINT, SIG_DFL);
+	signal(SIGCHLD, SIG_DFL);
+	signal(SIGQUIT, SIG_DFL);
+	signal(SIGTSTP, SIG_DFL);
+	signal(SIGSEGV, SIG_DFL);
 }
 
-static void assign_pipes(struct task *task)
+static int left_pipe[2];
+static int right_pipe[2];
+static int job_gid;
+static	void run_task(struct task *task)
 {
-	int idx;
-
-	task->in_pipe = NULL;
-	task->out_pipe = NULL;
-
-	if (pipes_num == 0)
-		return;
-
-	idx = task->idx;
-
-	if (idx == 0)
-		task->out_pipe = &pipes[1];
-	else {
-		if (idx == pipes_num)
-			task->in_pipe = &pipes[pipes_num * 2 - 2];
-		else {
-			task->out_pipe = &pipes[1 + (idx * 2)];
-			task->in_pipe = &pipes[idx * 2 - 2];
-		}
-	}
-}
-
-static void close_pipes(int fd1, int fd2)
-{
-	int i;
-	int *p;
-
-	p = pipes;
-
-	for(i = 0;i < (pipes_num * 2);i++) {
-		if ((p[i] == fd1) || (p[i] == fd2))
-			continue;
-		close(p[i]);
-	}
-}
-
-static void run_task(struct task *task, int *lead_pid, int idx)
-{
-	pid_t pid;
 	char *full_path;
-
-	task->idx = idx;
-	assign_pipes(task);
+	pid_t pid;
+#ifdef	DEBUG
+	printf("new run task %i\n", task->idx);
+#endif
 
 	full_path = get_full_path(task->name);
 
 	if (full_path == NULL) {
 		fprintf(stderr, "Can't find %s\n", task->name);
-		will_wait = 0;
 		return;
 	}
 
-	if (task->flag & FG)
-		will_wait = 1;
-	else
-		will_wait = 0;
+	if (task->idx == -1) {
+		/* only one task */
+		pid = fork();
 
-	if ((pid = fork())) {
-		if (*lead_pid == -1)
-			*lead_pid = pid;
+		if (pid == -1)
+			goto err;
 
-		task->pid = pid;
-		free(full_path);
-	} else {
-		setpgid(0, 0);
-		signal(SIGINT, SIG_DFL);
-		signal(SIGCHLD, SIG_DFL);
-		signal(SIGQUIT, SIG_DFL);
-		signal(SIGTSTP, SIG_DFL);
-		signal(SIGSEGV, SIG_DFL);
-
-		if ((idx == 0) && (bck == 0)) {
-#ifdef DEBUG
-			fprintf(stderr, "set child to fg!\n");
-#endif
-			tcsetpgrp(0, getpid());
+		if (pid == 0) {
+			setpgid(0, 0);
+			set_default_sig();
+			execve(full_path, task->args, environ);
 		}
+		return;
+	}
 
-		if (pipes_num) {
-			if (idx == 0) {
-#ifdef DEBUG
-				fprintf(stderr, "first %s idx %i; write to %i, closing %i\n",
-					task->name, idx, pipes[1], pipes[0]);
-#endif
-				dup2(pipes[1], 1);
-				close_pipes(pipes[1], -1);
-			} else {
-				if (idx == pipes_num) {
-					int last_in;
+	if (task->idx == 0) {
+		pipe(left_pipe);
+		pid = fork();
 
-					last_in = pipes[pipes_num * 2 - 2];
-#ifdef DEBUG
-					fprintf(stderr, "last %s idx %i; read from %i, pipes: %i\n",
-						task->name, idx, last_in, pipes_num);
+#ifdef	DEBUG
+		printf ("task %i is %i\n", task->idx, pid);
 #endif
-					dup2(last_in, 0);
-					close_pipes(last_in, -1);
-				} else {
-					int dup_in;
-					int dup_out;
+		if (pid == -1) 
+			goto err;
 
-					dup_in = pipes[idx * 2 - 2];
-					dup_out = pipes[1 + (idx * 2)];
-#ifdef DEBUG
-					fprintf(stderr, "middle %s idx %i; out to %i, in to %i\n",
-						task->name, idx, dup_out, dup_in);
-#endif
-					dup2(dup_out, 1);
-					dup2(dup_in, 0);
-					close_pipes(dup_out, dup_in);
-				}
-			}
+		if (pid) {
+			job_gid = pid;
+			return;
+		} else {
+			/* child */
+			setpgid(0, 0);
+			set_default_sig();
+			dup2(left_pipe[1], 1);
+			close(left_pipe[0]);
+			execve(full_path, task->args, environ);
 		}
-#ifdef DEBUG
-		fprintf(stderr, "execing %s %s\n", __func__, full_path);
-		{
-			int i;
+	}
 
-			printf("arguments:\n");
-			i = 0;
-
-			while (task->args[i]) {
-				printf("[%i] %s\n", i, task->args[i]);
-				i++;
-			};
-		}
+	/* create right pipe */
+	if (task->is_last == 0)
+		pipe(right_pipe);
+	pid = fork();
+#ifdef	DEBUG
+	printf ("task %i is %i\n", task->idx, pid);
 #endif
-		execve(full_path, task->args, environ);
+	if (pid == -1) {
+		fprintf(stderr, "Failed to fork %s\n", strerror(errno));
 		exit(1);
 	}
+
+	if (pid) {
+		close(left_pipe[0]);
+		close(left_pipe[1]);
+	} else {
+		setpgid(0, job_gid);
+		if (task->is_last == 0)
+			dup2(right_pipe[1], 1);
+
+		dup2(left_pipe[0], 0);
+		close(left_pipe[1]);
+		execve(full_path, task->args, environ);
+	}
+
+	memcpy(left_pipe, right_pipe, sizeof (left_pipe));
+	return;
+err:
+	fprintf(stderr, "Failed to fork %s\n", strerror(errno));
+	exit(1);
 }
 
 /* Processes global list of commands. */
 static void exec_cmd(void)
 {
 	struct list_head *pos;
-	pid_t lead_pid;
-	int idx;
-	
-	lead_pid = -1;
-	idx = 0;
-	create_pipes();
 
-	list_for_each(pos, &tasks) {
+	list_for_each(pos, &curr_job->tasks) {
 		struct task *task;
 
 		task = get_elem(pos, struct task, next);
-		run_task(task, &lead_pid, idx);
-		idx++;
+#ifdef	DEBUG
+		printf("task %i\n", task->idx);
+#endif
+		run_task(task);
 	}
 }
 
@@ -690,6 +644,59 @@ static void add_to_history(const char *cmd)
 	curr_cmd = new_ent;
 }
 
+#define	HIST_FILE	"tsh_hist"
+static void load_history(void)
+{
+	FILE *hist_file;
+	char *hist_string;
+	int ch;
+	char *err_str;
+	int pos;
+	int max_hist_strlen;
+
+	hist_file = fopen(HIST_FILE, "r");
+
+	if (hist_file == NULL) {
+		err_str = strerror(errno);
+		goto err;
+	}
+
+	pos = 0;
+	max_hist_strlen = 50;
+	hist_string = calloc(max_hist_strlen, 1);
+
+	if (hist_string == NULL) {
+		err_str = "calloc fail";
+		goto err;
+	}
+
+	while ((ch = fgetc(hist_file)) != EOF) {
+		if (ch == '\n') {
+			add_to_history(hist_string);
+			printf("ADD: %s\n", hist_string);
+			memset(hist_string, 0, max_hist_strlen);
+			pos = 0;
+			continue;
+		}
+
+		if (pos == max_hist_strlen) {
+			hist_string = realloc(hist_string, max_hist_strlen += 10);
+
+			if (hist_string == NULL) {
+				err_str = "realloc fail";
+				goto err;
+			}
+		}
+
+		hist_string[pos++] = ch;
+	};
+
+	return;
+err:
+	fprintf (stderr, "Failed to load history file: %s\n", err_str);
+	return;
+}
+
 static void dump_history(void)
 {
 	struct list_head *pos;
@@ -832,7 +839,7 @@ static int read_cmd(void)
 			if (tab_cnt == 2) {
 				/* run autocompletion */
 				print_ac(cmd);
-				printf("\n");
+				//printf("\n");
 				write(1, prompt, strlen(prompt));
 				write(1, cmd, strlen(cmd));
 			}	
@@ -855,7 +862,7 @@ static int read_cmd(void)
 		}
 
 		/* backspace */
-		if (c == 0x8) {
+		if (c == 0x7f) {
 			if (cursor_pos)
 				handle_backspace();
 			continue;
@@ -933,6 +940,22 @@ static int process_builtins(void)
 	return -1;
 }
 
+#ifdef	DEBUG
+static void set_sigsegv(void)
+{
+	struct sigaction sa;
+
+	memset(&sa, 0, sizeof sa);
+	sa.sa_sigaction = sigsegv_action;
+	sa.sa_flags |= (SA_SIGINFO | SA_RESTART);
+	sigaction(SIGSEGV, &sa, NULL);
+}
+#else
+static void set_sigsegv(void)
+{
+
+}
+#endif
 int main(void)
 {
 	builtins_num = ARR_SZ(builtins);
@@ -940,11 +963,11 @@ int main(void)
 	alloc_cmd();
 	init_termc();
 	init_prompt();
+	load_history();
 	signal(SIGINT, SIG_IGN);
 	signal(SIGTSTP, SIG_IGN);
-#ifdef	DEBUG
-	signal(SIGSEGV, hndl_ssegv);
-#endif
+	set_sigsegv();
+
 	sa.sa_sigaction = hndl_chld1;
 	sa.sa_flags |= (SA_SIGINFO | SA_RESTART);
 	sigaction(SIGCHLD, &sa, NULL);

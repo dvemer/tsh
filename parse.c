@@ -27,6 +27,10 @@ static int check_bck(char *s)
 	return 0;
 }
 
+static void add_job_task(struct job *job)
+{
+}
+
 static void add_task_item(struct task **task_ptr, char *str)
 {
 	if (*task_ptr == NULL) {
@@ -60,15 +64,9 @@ static void add_task_item(struct task **task_ptr, char *str)
 static struct task *parse_command(char *command)
 {
         char *t;
-        char *p;
-        int cmd_flag;
-	int argc;
 	struct task *new_task;
 
         t = command;
-        p = t;
-        cmd_flag = 0;
-	argc = 0;
 	new_task = NULL;
 
         while (*t != '\0') {
@@ -100,33 +98,66 @@ static struct task *parse_command(char *command)
 	return new_task;
 }
 
-void parse(char *s, struct list_head *tasks, int *pipes_num, int *bck)
+static struct job *create_job(char *s)
 {
-        int i;
+	struct job *new_job;
+
+	new_job = calloc(sizeof *new_job, 1);
+
+	if (new_job == NULL)
+		return NULL;
+
+	new_job->name = calloc(strlen(s) + 1, 1);
+
+	if (new_job == NULL)
+		return NULL;
+
+	strcpy(new_job->name, s);
+	new_job->tasks.prev = &new_job->tasks;
+	new_job->tasks.next = &new_job->tasks;
+	return new_job;
+}
+
+struct job *parse(char *s, int *pipes_num, int *bck)
+{
         char *t;
         char *p;
+	struct job *new_job;
+	int idx;
+	struct task *new_task;
 
-        i = 0;
+	*pipes_num = 0;
+	new_job = create_job(s);
+
+	if (new_job == NULL) {
+		fprintf(stderr, "Failed to alloc memory!\n");
+		exit(1);
+	}
+
         t = &s[0];
         p = t;
 	*bck = check_bck(s);
+	new_job->bckg = *bck;
+	idx = 0;
 
         while (1) {
 
                 if ((*t == '|') || (*t == '\0')) {
                         char tmp;
-			struct task *new_task;
 
                         tmp = *t;
                         *t = '\0';
                         new_task = parse_command(p);
+			new_task->idx = idx;
+			new_task->is_last = 0;
+			idx++;
 
 			if (*bck)
 				new_task->flag = BG;
 			else
 				new_task->flag = FG;
 
-			list_add_tail(&new_task->next, tasks);
+			list_add_tail(&new_task->next, &new_job->tasks);
 
                         if (tmp == '|') {
 				(*pipes_num)++;
@@ -154,5 +185,15 @@ void parse(char *s, struct list_head *tasks, int *pipes_num, int *bck)
                 t++;
         };
 
-	return;
+	if (*pipes_num == 0) {
+		struct task *task;
+
+		task = get_elem(new_job->tasks.next, struct task, next);
+		task->idx = -1;
+	}
+
+	if (new_task)
+		new_task->is_last = 1;
+
+	return new_job;
 }
