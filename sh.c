@@ -24,7 +24,6 @@ extern char **environ;
 /* prompt string */
 static char prompt[50];
 /* jobs list */
-struct list_head tasks = {&tasks, &tasks};
 static int pipes_num;
 static int tasks_num;
 /* input command */
@@ -38,27 +37,30 @@ static struct list_head history = {&history, &history};
 static struct history_ent *curr_cmd;
 static int history_sz = 0;
 int builtins_num;
+static int jobs_idxs[MAX_JOBS];
 
 static struct job *curr_job;
 struct list_head jobs = {&jobs, &jobs};
-static void try_chdir(void);
-static void dump_history(void);
-static void do_exit(void);
-static void list_jobs(void);
+static void try_chdir(char *cmd);
+static void dump_history(char *cmd);
+static void do_exit(char *cmd);
+static void do_bg(char *cmd);
+static void do_fg(char *cmd);
+static void list_jobs(char *cmd);
 
 /* terminal parameters */
 struct termios tattr;
 
 struct builtin_ent builtins[] = {{"cd", try_chdir}, {"help", NULL},
 				 {"history", dump_history}, {"jobs", list_jobs},
-				 {"exit", do_exit},
+				 {"exit", do_exit}, {"bg", do_bg}, {"fg", do_fg}
 				 };
 
-static struct task *get_task(int pid)
+static struct task *get_task_in_job(struct job *job, int pid)
 {
 	struct list_head *pos;
 
-	list_for_each(pos, &tasks) {
+	list_for_each(pos, &job->tasks) {
 		struct task *task;
 
 		task = get_elem(pos, struct task, next);
@@ -70,23 +72,65 @@ static struct task *get_task(int pid)
 	return NULL;
 }
 
+static struct task *get_task(int pid, struct job **job_ptr)
+{
+	struct list_head *pos;
+
+	list_for_each(pos, &jobs) {
+		struct job *job;
+		struct task *result;
+
+		job = get_elem(pos, struct job, next);
+		result = get_task_in_job(job, pid);
+
+		if (result != NULL) {
+			if (job_ptr != NULL)
+				*job_ptr = job;
+			return result;
+		}
+	}
+
+	return NULL;
+}
+
 static void hndl_chld1(int code, siginfo_t *si, void *arg)
 {
 	int pid;
 	int status;
 	struct task *task;
+	struct job *job;
 
 	pid = waitpid(-1, &status, WUNTRACED | WCONTINUED);
-
-	if (WIFSTOPPED(status))
-		printf("task %i pid stopped!\n", 0);
-
-	if (WIFEXITED(status))
-		printf("task %i exited!\n", 0);
 #ifdef DEBUG
 	printf("task %i done!\n", pid);
 #endif
-	task = get_task(pid);
+	task = get_task(pid, &job);
+
+	if (task == NULL) {
+		printf("pid %i not found in jobs...\n", pid);
+	} else {
+		if (WIFEXITED(status)) {
+#ifdef	DEBUG
+			printf("task %i exited!\n");
+#endif
+			delete_item(&task->next);
+			free(task);
+		}
+#ifdef	DEBUG
+		if (WIFSTOPPED(status))
+			printf("task %i pid stopped!\n", 0);
+#endif
+
+		job->tasks_num--;
+
+		if (job->tasks_num == 0) {
+			/* job is done */
+			printf("freeing job %i\n", job->idx);
+			jobs_idxs[job->idx] = 0;			
+			delete_item(&job->next);
+			free(job);
+		}
+	}
 
 	tasks_num--;
 	return;
@@ -94,22 +138,14 @@ static void hndl_chld1(int code, siginfo_t *si, void *arg)
 
 static void sighup_jobs(void)
 {
-	struct list_head *pos;
-
-	list_for_each(pos, &tasks) {
-		struct task *task;
-
-		task = get_elem(pos, struct task, next);
-
-		if (!(task->flag & DSWN))
-			kill(task->pid, SIGHUP);
-	}
 }
 
 /* SIGHUP handler */
 static void hndl_sighup(int code)
 {
+#ifdef	DEBUG
 	printf("sighup caught!\n");
+#endif
 	sighup_jobs();
 	getchar();
 	exit(1);
@@ -133,19 +169,17 @@ static void sigsegv_action(int code, siginfo_t *si, void *ctx)
 }
 #endif
 
-static void list_jobs(void)
+static void list_jobs(char *cmd)
 {
 	struct list_head *pos;
-	int i;
 
-	i = 0;
 	printf("jobs:\n");
 
-	list_for_each(pos, &tasks) {
-		struct task *task;
+	list_for_each(pos, &jobs) {
+		struct job *job;
 
-		task = get_elem(pos, struct task, next);
-		printf("[%i] %s\n", ++i, task->name);
+		job = get_elem(pos, struct job, next);
+		printf("[%i] %s\n", job->idx, job->name);
 	}
 }
 
@@ -252,23 +286,40 @@ static void dump_tasks(void)
 }
 #endif
 
+
+static int get_next_idx(void)
+{
+	int i;
+
+	for(i = 0;i < MAX_JOBS;i++) {
+		if (jobs_idxs[i] == 0) {
+			jobs_idxs[i] = 1;
+			return i;
+		}
+	}
+
+	return -1;
+}
+
 /*
  * Parses command line for arguments and pipes.
  */
 static void parse_cmd(void)
 {
 	pipes_num = 0;
-	tasks.prev = &tasks;
-	tasks.next = &tasks;
 	curr_job = parse(cmd, &pipes_num, &bck);
+
+	if (curr_job != NULL) {
+		curr_job->idx = get_next_idx();
+		list_add_tail(&curr_job->next, &jobs);
 #ifdef DEBUG
-	printf("back:%i\n", bck);
-	printf("pipes:%i\n", pipes_num);
+		printf("back:%i\n", bck);
+		printf("pipes:%i\n", pipes_num);
 #endif
-	tasks_num = pipes_num + 1;
 #ifdef DEBUG
-	dump_tasks();
+		dump_tasks();
 #endif
+	}
 }
 
 static void set_default_sig(void)
@@ -283,7 +334,8 @@ static void set_default_sig(void)
 static int left_pipe[2];
 static int right_pipe[2];
 static int job_gid;
-static	void run_task(struct task *task)
+
+static int run_task(struct task *task)
 {
 	char *full_path;
 	pid_t pid;
@@ -295,8 +347,10 @@ static	void run_task(struct task *task)
 
 	if (full_path == NULL) {
 		fprintf(stderr, "Can't find %s\n", task->name);
-		return;
+		return -1;
 	}
+
+	tasks_num++;
 
 	if (task->idx == -1) {
 		/* only one task */
@@ -310,8 +364,9 @@ static	void run_task(struct task *task)
 			tcsetpgrp(0, getpid());
 			set_default_sig();
 			execve(full_path, task->args, environ);
-		}
-		return;
+		} else
+			task->pid = pid;
+		return 0;
 	}
 
 	if (task->idx == 0) {
@@ -326,7 +381,8 @@ static	void run_task(struct task *task)
 
 		if (pid) {
 			job_gid = pid;
-			return;
+			task->pid = pid;
+			return 0;
 		} else {
 			/* child */
 			setpgid(0, 0);
@@ -352,6 +408,7 @@ static	void run_task(struct task *task)
 		if (pid) {
 			close(left_pipe[0]);
 			close(left_pipe[1]);
+			task->pid = pid;
 		} else {
 			setpgid(0, job_gid);
 			tcsetpgrp(0, getpid());
@@ -364,7 +421,7 @@ static	void run_task(struct task *task)
 		}
 
 		memcpy(left_pipe, right_pipe, sizeof (left_pipe));
-		return;
+		return 0;
 	}
 err:
 	fprintf(stderr, "Failed to fork %s\n", strerror(errno));
@@ -376,6 +433,8 @@ static void exec_cmd(void)
 {
 	struct list_head *pos;
 
+	tasks_num = 0;
+
 	list_for_each(pos, &curr_job->tasks) {
 		struct task *task;
 
@@ -383,11 +442,12 @@ static void exec_cmd(void)
 #ifdef	DEBUG
 		printf("task %i\n", task->idx);
 #endif
-		run_task(task);
+		if (run_task(task) == -1)
+			return;
 	}
 }
 
-static void try_chdir(void)
+static void try_chdir(char *cmd)
 {
 	char *space_delim;
 
@@ -401,18 +461,31 @@ static void try_chdir(void)
 	while (*space_delim == ' ') space_delim++;
 
 	if (chdir(space_delim))
+#ifdef	DEBUG
 		printf("chdir: %s\n", space_delim);
+#endif
 		
 	return;
 }
 
-static void do_exit(void)
+static void do_exit(char *cmd)
 {
 	exit(1);
 }
 
-struct termios ts;
-struct sigaction sa;
+static void do_bg(char *cmd)
+{
+	int job_idx;
+
+	sscanf(cmd, "bg %i", &job_idx);
+}
+
+static void do_fg(char *cmd)
+{
+	int job_idx;
+
+	sscanf(cmd, "fg %i", &job_idx);
+}
 
 static void try_dwn(char *cmd)
 {
@@ -420,7 +493,7 @@ static void try_dwn(char *cmd)
 	struct task *task;
 
 	sscanf(cmd, "dwn %i", &pid);
-	task = get_task(pid);
+	task = get_task(pid, NULL);
 
 	if (task != NULL)
 		task->flag |= DSWN;
@@ -430,7 +503,6 @@ static void try_export(char *cmd)
 {
 	/* NI */
 }
-
 
 #ifdef TERMNC
 static void restore_term(void)
@@ -609,7 +681,6 @@ static int handle_ansi(void)
 				return 0;
 		}
 	}
-
 	return 0;
 }
 
@@ -683,7 +754,7 @@ err:
 	return;
 }
 
-static void dump_history(void)
+static void dump_history(char *cmd)
 {
 	struct list_head *pos;
 	int i;
@@ -759,17 +830,6 @@ static void insert_ch(char c)
 		memmove(&cmd[cursor_pos + 1], &cmd[cursor_pos],
 		strlen(cmd) - cursor_pos + 1);
 		cmd[cursor_pos] = c;
-#if 0
-		/* erase whole line */
-		t_erase_line();
-		/* move cursor backward */
-		t_move_cur_back(strlen(cmd) + strlen(prompt));
-		/* print prompt again */
-		print_prompt();
-		/* print cmd again */
-		write(1, cmd, strlen(cmd));
-		cursor_pos = strlen(cmd);
-#endif
 		write(1, &cmd[cursor_pos], strlen(cmd) - cursor_pos + 1);
 		cursor_pos = strlen(cmd);
 	} else {
@@ -865,8 +925,6 @@ static int read_cmd(void)
 		if (c == 0xA) {
 			break;
 		}
-
-
 	}
 
 	return 0;
@@ -909,7 +967,7 @@ static void alloc_cmd(void)
 	ASSERT_ERR ("malloc failed\n", (cmd == NULL));
 }
 
-static int process_builtins(void)
+static int process_builtins(char *cmd)
 {
 	int i;
 
@@ -918,7 +976,7 @@ static int process_builtins(void)
 	for(i = 0;i < ARR_SZ(builtins);i++) {
 		if (strstr(cmd, builtins[i].name) == &cmd[0])
 			if (builtins[i].handler != NULL) {
-				builtins[i].handler();
+				builtins[i].handler(cmd);
 				return 0;
 			}
 	}
@@ -927,21 +985,55 @@ static int process_builtins(void)
 }
 
 #ifdef	DEBUG
-static void set_sigsegv(void)
+static int set_sigsegv(void)
 {
 	struct sigaction sa;
 
 	memset(&sa, 0, sizeof sa);
 	sa.sa_sigaction = sigsegv_action;
 	sa.sa_flags |= (SA_SIGINFO | SA_RESTART);
-	sigaction(SIGSEGV, &sa, NULL);
+	return sigaction(SIGSEGV, &sa, NULL);
 }
 #else
-static void set_sigsegv(void)
+static int set_sigsegv(void)
 {
-
+	return 0;
 }
 #endif
+
+static void set_signals(void)
+{
+	const char *sig = "SIGINT";
+	struct sigaction sa;
+
+	if (signal(SIGINT, SIG_IGN) == SIG_ERR)
+		goto err;
+
+	sig = "SIGTSTP";
+	if (signal(SIGTSTP, SIG_IGN) == SIG_ERR)
+		goto err;
+
+	sig = "SIGSEGV";
+	if (set_sigsegv() == -1)
+		goto err;
+
+	sig = "SIGHUP";
+	if (signal(SIGHUP, hndl_sighup) == SIG_ERR)
+		goto err;
+
+	sig = "SIGCHLD";
+	sa.sa_sigaction = hndl_chld1;
+	sa.sa_flags |= (SA_SIGINFO | SA_RESTART);
+	if (sigaction(SIGCHLD, &sa, NULL) == -1)
+		goto err;
+
+	return;
+err:
+	fprintf(stderr, "Failed to set %s handler: %s\n", sig, strerror(errno));
+	getchar();
+	return;
+}
+
 int main(void)
 {
 	builtins_num = ARR_SZ(builtins);
@@ -950,20 +1042,14 @@ int main(void)
 	init_termc();
 	init_prompt();
 	load_history();
-	signal(SIGINT, SIG_IGN);
-	signal(SIGTSTP, SIG_IGN);
-	set_sigsegv();
-
-	sa.sa_sigaction = hndl_chld1;
-	sa.sa_flags |= (SA_SIGINFO | SA_RESTART);
-	sigaction(SIGCHLD, &sa, NULL);
-	signal(SIGHUP, hndl_sighup);
 	tcsetpgrp(0, getpid());
+	set_signals();
 
 	while (1) {
 		char *p;
 
 		print_prompt();
+
 		if (read_cmd() < 0)
 			continue;
 
@@ -978,7 +1064,8 @@ int main(void)
 			continue;
 
 		add_to_history(cmd);
-		if (process_builtins() == 0)
+
+		if (process_builtins(cmd) == 0)
 			continue;
 
 		if (strstr(cmd, "mv ") == &cmd[0]) {
@@ -988,7 +1075,7 @@ int main(void)
 
 			/* mv b/f pid */
 			sscanf(cmd, "mv %c %i\n", &type, &task_pid);
-			task_to_move = get_task(task_pid);
+			task_to_move = get_task(task_pid, NULL);
 
 			if (task_to_move != NULL) {
 				int status;
@@ -1016,7 +1103,8 @@ int main(void)
 		/* now exec list of commands */
 		exec_cmd();
 
-		if (bck == 0) {
+		/* run in background */
+		if (tasks_num && bck == 0) {
 			while (1) {
 				pause();
 

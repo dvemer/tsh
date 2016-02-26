@@ -17,7 +17,7 @@
 
 struct builtin_ent {
 	const char *name;
-	void (*handler)(void);
+	void (*handler)(char *cmd);
 };
 
 struct history_ent {
@@ -43,6 +43,8 @@ struct task {
 struct job {
 	char *name;
 	int bckg;
+	int idx;
+	int tasks_num;
 	struct list_head tasks;
 	struct list_head next;
 };

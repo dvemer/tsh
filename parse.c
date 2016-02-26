@@ -195,5 +195,7 @@ struct job *parse(char *s, int *pipes_num, int *bck)
 	if (new_task)
 		new_task->is_last = 1;
 
+	new_job->tasks_num = *pipes_num + 1;
+
 	return new_job;
 }
