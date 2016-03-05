@@ -24,7 +24,6 @@ extern char **environ;
 /* prompt string */
 static char prompt[50];
 /* jobs list */
-static int pipes_num;
 static int tasks_num;
 /* input command */
 static char *cmd = NULL;
@@ -125,7 +124,9 @@ static void hndl_chld1(int code, siginfo_t *si, void *arg)
 
 		if (job->tasks_num == 0) {
 			/* job is done */
+#ifdef	DEBUG
 			printf("freeing job %i\n", job->idx);
+#endif
 			jobs_idxs[job->idx] = 0;			
 			delete_item(&job->next);
 			free(job);
@@ -306,15 +307,13 @@ static int get_next_idx(void)
  */
 static void parse_cmd(void)
 {
-	pipes_num = 0;
-	curr_job = parse(cmd, &pipes_num, &bck);
+	curr_job = parse(cmd, &bck);
 
 	if (curr_job != NULL) {
 		curr_job->idx = get_next_idx();
 		list_add_tail(&curr_job->next, &jobs);
 #ifdef DEBUG
 		printf("back:%i\n", bck);
-		printf("pipes:%i\n", pipes_num);
 #endif
 #ifdef DEBUG
 		dump_tasks();

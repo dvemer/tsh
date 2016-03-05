@@ -118,15 +118,16 @@ static struct job *create_job(char *s)
 	return new_job;
 }
 
-struct job *parse(char *s, int *pipes_num, int *bck)
+struct job *parse(char *s, int *bck)
 {
         char *t;
         char *p;
 	struct job *new_job;
 	int idx;
 	struct task *new_task;
+	int pipes_num;
 
-	*pipes_num = 0;
+	pipes_num = 0;
 	new_job = create_job(s);
 
 	if (new_job == NULL) {
@@ -160,7 +161,7 @@ struct job *parse(char *s, int *pipes_num, int *bck)
 			list_add_tail(&new_task->next, &new_job->tasks);
 
                         if (tmp == '|') {
-				(*pipes_num)++;
+				pipes_num++;
 
 				/* dirty hack:disable background for chains */
 				*bck = 0;
@@ -185,7 +186,7 @@ struct job *parse(char *s, int *pipes_num, int *bck)
                 t++;
         };
 
-	if (*pipes_num == 0) {
+	if (pipes_num == 0) {
 		struct task *task;
 
 		task = get_elem(new_job->tasks.next, struct task, next);
@@ -195,7 +196,7 @@ struct job *parse(char *s, int *pipes_num, int *bck)
 	if (new_task)
 		new_task->is_last = 1;
 
-	new_job->tasks_num = *pipes_num + 1;
+	new_job->tasks_num = pipes_num + 1;
 
 	return new_job;
 }

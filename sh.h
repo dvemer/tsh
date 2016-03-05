@@ -49,5 +49,5 @@ struct job {
 	struct list_head next;
 };
 
-struct job *parse(char *s, int *pipes_num, int *bck);
+struct job *parse(char *s, int *bck);
 #endif
