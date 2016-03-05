@@ -27,10 +27,6 @@ static int check_bck(char *s)
 	return 0;
 }
 
-static void add_job_task(struct job *job)
-{
-}
-
 static void add_task_item(struct task **task_ptr, char *str)
 {
 	if (*task_ptr == NULL) {

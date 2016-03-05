@@ -1,0 +1,7 @@
+ffh>ls
+input.txt
+output.txt
+output_valid.txt
+test1.sh
+tsh
+ffh>exit

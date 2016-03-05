@@ -12,6 +12,7 @@
 #include <errno.h>
 #include <time.h>
 #include <sys/ucontext.h>
+#include <fcntl.h>
 #include "list.h"
 #include "sh.h"
 #include "common.h"
@@ -1033,9 +1034,32 @@ err:
 	return;
 }
 
+#ifdef	DEBUG_OUTPUT
+#define	OUTPUT_FILE	"output.txt"
+static void dup_debug_output(void)
+{
+	int output_fd;
+
+	output_fd = creat(OUTPUT_FILE, 0664);
+
+	if (output_fd == -1) {
+		fprintf(stderr, "Failed to open output file: %s\n", strerror(errno));
+		getchar();
+		exit(1);
+	}
+
+	dup2(output_fd, 1);
+}
+#else
+static void dup_debug_output(void)
+{
+}
+#endif
+
 int main(void)
 {
 	builtins_num = ARR_SZ(builtins);
+	dup_debug_output();
 	init_autoc();
 	alloc_cmd();
 	init_termc();
