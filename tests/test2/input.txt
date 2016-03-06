@@ -1,0 +1,5 @@
+[A
+history
+[A
+uname -a
+exit

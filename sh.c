@@ -650,16 +650,55 @@ static void cursor_left(void)
 	}
 }
 
+#ifdef	DEBUG_INPUT
+#define	INPUT_FILE	"input.bin"
+static int input_fd;
+static void log_input(unsigned char value)
+{
+	write(input_fd, &value, sizeof value);
+}
+
+static void init_debug_input(void)
+{
+	input_fd = creat(INPUT_FILE, 0664);
+
+	if (input_fd == -1) {
+		fprintf(stderr, "Failed to open input file: %s\n", strerror(errno));
+		getchar();
+		exit(1);
+	}
+}
+
+static void deinit_debug_input(void)
+{
+	close(input_fd);
+}
+#else
+static void log_input(unsigned char value __attribute__ ((unused)))
+{
+}
+
+static void init_debug_input(void)
+{
+}
+
+static void deinit_debug_input(void)
+{
+}
+#endif
+
 static int handle_ansi(void)
 {
 	unsigned char second_byte;
 
 	read(0, &second_byte, sizeof second_byte);
+	log_input(second_byte);
 
 	if (second_byte == '[') {
 		unsigned char cntrl_byte;
 
 		read(0, &cntrl_byte, sizeof cntrl_byte);
+		log_input(cntrl_byte);
 
 		/* cursor up */
 		switch (cntrl_byte) {
@@ -866,9 +905,10 @@ static void handle_backspace(void)
 	}
 }
 
+
 static int read_cmd(void)
 {
-	char c;
+	unsigned char c;
 	int tab_cnt;
 
 	memset(cmd, 0, cmd_len);
@@ -877,6 +917,7 @@ static int read_cmd(void)
 
 	while (1) {
 		read (0, &c, sizeof c);
+		log_input(c);
 
 		/* tab */
 		if (c == 0x9) {
@@ -974,7 +1015,7 @@ static int process_builtins(char *cmd)
 	i = 0;
 
 	for(i = 0;i < ARR_SZ(builtins);i++) {
-		if (strstr(cmd, builtins[i].name) == &cmd[0])
+		if (strcmp(cmd, builtins[i].name) == 0)
 			if (builtins[i].handler != NULL) {
 				builtins[i].handler(cmd);
 				return 0;
@@ -1048,6 +1089,7 @@ static void dup_debug_output(void)
 		exit(1);
 	}
 
+	setvbuf(stdout, NULL, _IONBF, 0);
 	dup2(output_fd, 1);
 }
 #else
@@ -1060,6 +1102,7 @@ int main(void)
 {
 	builtins_num = ARR_SZ(builtins);
 	dup_debug_output();
+	init_debug_input();
 	init_autoc();
 	alloc_cmd();
 	init_termc();
