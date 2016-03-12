@@ -143,6 +143,16 @@ static void hndl_chld1(int code, siginfo_t *si, void *arg)
 
 static void sighup_jobs(void)
 {
+	struct list_head *pos;
+
+	list_for_each(pos, &jobs) {
+		struct job *job;
+
+		job = get_elem(pos, struct job, next);
+
+		if (job->dswnd == 0)
+			killpg(job->pgid, SIGHUP);
+	}
 }
 
 /* SIGHUP handler */
