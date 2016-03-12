@@ -45,6 +45,7 @@ struct job {
 	int bckg;
 	int idx;
 	int tasks_num;
+	int pgid;
 	struct list_head tasks;
 	struct list_head next;
 };

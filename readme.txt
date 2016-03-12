@@ -18,3 +18,5 @@ Technicals:
 3) Fix dumb pipe creation system.
 Language:
 1) Grammar parsing...
+
+!To perform tests: set owner of run_pts root and set setuid bit!

@@ -38,6 +38,7 @@ static struct history_ent *curr_cmd;
 static int history_sz = 0;
 int builtins_num;
 static int jobs_idxs[MAX_JOBS];
+static struct job *jobs_ptrs[MAX_JOBS];
 
 static struct job *curr_job;
 struct list_head jobs = {&jobs, &jobs};
@@ -115,13 +116,13 @@ static void hndl_chld1(int code, siginfo_t *si, void *arg)
 #endif
 			delete_item(&task->next);
 			free(task);
+			job->tasks_num--;
 		}
 #ifdef	DEBUG
 		if (WIFSTOPPED(status))
 			printf("task %i pid stopped!\n", 0);
 #endif
 
-		job->tasks_num--;
 
 		if (job->tasks_num == 0) {
 			/* job is done */
@@ -129,6 +130,7 @@ static void hndl_chld1(int code, siginfo_t *si, void *arg)
 			printf("freeing job %i\n", job->idx);
 #endif
 			jobs_idxs[job->idx] = 0;			
+			jobs_ptrs[job->idx] = NULL;
 			delete_item(&job->next);
 			free(job);
 		}
@@ -312,6 +314,7 @@ static void parse_cmd(void)
 
 	if (curr_job != NULL) {
 		curr_job->idx = get_next_idx();
+		jobs_ptrs[curr_job->idx] = curr_job;
 		list_add_tail(&curr_job->next, &jobs);
 #ifdef DEBUG
 		printf("back:%i\n", bck);
@@ -343,11 +346,16 @@ static int run_task(struct task *task)
 	printf("new run task %i\n", task->idx);
 #endif
 
-	full_path = get_full_path(task->name);
+	if (strchr(task->name, '/') != NULL) {
+		/* name contains '/', don't scan $PATH */
+		full_path = task->name;
+	} else {
+		full_path = get_full_path(task->name);
 
-	if (full_path == NULL) {
-		fprintf(stderr, "Can't find %s\n", task->name);
-		return -1;
+		if (full_path == NULL) {
+			fprintf(stderr, "Can't find %s\n", task->name);
+			return -1;
+		}
 	}
 
 	tasks_num++;
@@ -370,6 +378,7 @@ static int run_task(struct task *task)
 	}
 
 	if (task->idx == 0) {
+		/* create left pipe */
 		pipe(left_pipe);
 		pid = fork();
 
@@ -381,6 +390,7 @@ static int run_task(struct task *task)
 
 		if (pid) {
 			job_gid = pid;
+			curr_job->pgid = pid;
 			task->pid = pid;
 			return 0;
 		} else {
@@ -478,6 +488,18 @@ static void do_bg(char *cmd)
 	int job_idx;
 
 	sscanf(cmd, "bg %i", &job_idx);
+
+	if (job_idx < 0 || job_idx >= MAX_JOBS)
+		goto err;
+
+	if (jobs_ptrs[job_idx] == NULL)
+		goto err;
+
+	/* send SIGCONT */
+
+err:
+	fprintf(stderr, "invalid job index\n");
+	return;
 }
 
 static void do_fg(char *cmd)
@@ -1063,8 +1085,9 @@ static void set_signals(void)
 		goto err;
 
 	sig = "SIGCHLD";
+	memset(&sa, 0, sizeof sa);
 	sa.sa_sigaction = hndl_chld1;
-	sa.sa_flags |= (SA_SIGINFO | SA_RESTART);
+	sa.sa_flags |= (SA_SIGINFO);
 	if (sigaction(SIGCHLD, &sa, NULL) == -1)
 		goto err;
 
@@ -1134,36 +1157,6 @@ int main(void)
 		if (process_builtins(cmd) == 0)
 			continue;
 
-		if (strstr(cmd, "mv ") == &cmd[0]) {
-			char type;
-			int task_pid;
-			struct task *task_to_move;
-
-			/* mv b/f pid */
-			sscanf(cmd, "mv %c %i\n", &type, &task_pid);
-			task_to_move = get_task(task_pid, NULL);
-
-			if (task_to_move != NULL) {
-				int status;
-
-				if (type == 'f')
-					task_to_move->flag = FG;
-
-				if (type == 'b')
-					task_to_move->flag = BG;
-				else
-					continue;
-
-				/* try to move task */
-				printf("moving %i to %c\n", task_to_move->pid, type);
-				tcsetpgrp(0, task_to_move->pid);
-				waitpid(-1, &status, WUNTRACED | WCONTINUED);
-				tcsetpgrp(0, getpid());
-			}
-
-			continue;
-		}
-
 		/* parse arguments if needed*/
 		parse_cmd();
 		/* now exec list of commands */
@@ -1172,15 +1165,14 @@ int main(void)
 		/* run in background */
 		if (tasks_num && bck == 0) {
 			while (1) {
-				pause();
-
 				if (tasks_num == 0) {
 					tcsetpgrp(0, getpid());
 #ifdef DEBUG
 					printf("wake!\n");
 #endif
 					break;
-				}
+				} else
+					pause();
 			};
 		}
 
