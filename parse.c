@@ -147,12 +147,8 @@ struct job *parse(char *s, int *bck)
                         new_task = parse_command(p);
 			new_task->idx = idx;
 			new_task->is_last = 0;
+			new_task->job = new_job;
 			idx++;
-
-			if (*bck)
-				new_task->flag = BG;
-			else
-				new_task->flag = FG;
 
 			list_add_tail(&new_task->next, &new_job->tasks);
 

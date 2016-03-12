@@ -73,7 +73,7 @@ static struct task *get_task_in_job(struct job *job, int pid)
 	return NULL;
 }
 
-static struct task *get_task(int pid, struct job **job_ptr)
+static struct task *get_task(int pid)
 {
 	struct list_head *pos;
 
@@ -85,8 +85,6 @@ static struct task *get_task(int pid, struct job **job_ptr)
 		result = get_task_in_job(job, pid);
 
 		if (result != NULL) {
-			if (job_ptr != NULL)
-				*job_ptr = job;
 			return result;
 		}
 	}
@@ -105,35 +103,38 @@ static void hndl_chld1(int code, siginfo_t *si, void *arg)
 #ifdef DEBUG
 	printf("task %i done!\n", pid);
 #endif
-	task = get_task(pid, &job);
+	task = get_task(pid);
 
 	if (task == NULL) {
 		printf("pid %i not found in jobs...\n", pid);
 	} else {
+		job = task->job;
 		if (WIFEXITED(status)) {
 #ifdef	DEBUG
-			printf("task %i exited!\n");
+			printf("%i exited\n", pid);
 #endif
 			delete_item(&task->next);
 			free(task);
 			job->tasks_num--;
+
+			if (job->tasks_num == 0) {
+				/* job is done */
+#ifdef	DEBUG
+				printf("freeing job %i\n", job->idx);
+#endif
+				if (job->bckg == 1)
+					printf("job %i done\n", job->idx);
+
+				jobs_idxs[job->idx] = 0;
+				jobs_ptrs[job->idx] = NULL;
+				delete_item(&job->next);
+				free(job);
+			}
 		}
 #ifdef	DEBUG
 		if (WIFSTOPPED(status))
 			printf("task %i pid stopped!\n", 0);
 #endif
-
-
-		if (job->tasks_num == 0) {
-			/* job is done */
-#ifdef	DEBUG
-			printf("freeing job %i\n", job->idx);
-#endif
-			jobs_idxs[job->idx] = 0;			
-			jobs_ptrs[job->idx] = NULL;
-			delete_item(&job->next);
-			free(job);
-		}
 	}
 
 	tasks_num--;
@@ -369,7 +370,9 @@ static int run_task(struct task *task)
 
 		if (pid == 0) {
 			setpgid(0, 0);
-			tcsetpgrp(0, getpid());
+
+			if (curr_job->bckg == 0)
+				tcsetpgrp(0, getpid());
 			set_default_sig();
 			execve(full_path, task->args, environ);
 		} else
@@ -397,7 +400,8 @@ static int run_task(struct task *task)
 			/* child */
 			setpgid(0, 0);
 			set_default_sig();
-			tcsetpgrp(0, getpid());
+			if (curr_job->bckg == 0)
+				tcsetpgrp(0, getpid());
 			dup2(left_pipe[1], 1);
 			close(left_pipe[0]);
 			execve(full_path, task->args, environ);
@@ -511,14 +515,14 @@ static void do_fg(char *cmd)
 
 static void try_dwn(char *cmd)
 {
-	int pid;
-	struct task *task;
+	int idx;
 
-	sscanf(cmd, "dwn %i", &pid);
-	task = get_task(pid, NULL);
+	sscanf(cmd, "disown %i", &idx);
 
-	if (task != NULL)
-		task->flag |= DSWN;
+	if (jobs_ptrs[idx] == NULL)
+		return;
+
+	jobs_ptrs[idx]->dswnd = 1;
 }
 
 static void try_export(char *cmd)

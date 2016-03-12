@@ -26,29 +26,29 @@ struct history_ent {
 	char cmd_string[];
 };
 
+struct job {
+	char *name; /* whole input string */
+	int bckg; /* 1 if background */
+	int idx;
+	int tasks_num;
+	int pgid;
+	int dswnd; /* 1 if disowned */
+	struct list_head tasks;
+	struct list_head next;
+};
+
 /* entry to execute */
 struct task {
 	char *name;
 	char *args[MAX_ARGS];
 	int argc;
-	int *in_pipe;
-	int *out_pipe;
 	int pid;
 	int idx;
-	int flag;
 	int is_last;
+	struct job *job;
 	struct list_head next; /* for pipe convair */
 };
 
-struct job {
-	char *name;
-	int bckg;
-	int idx;
-	int tasks_num;
-	int pgid;
-	struct list_head tasks;
-	struct list_head next;
-};
 
 struct job *parse(char *s, int *bck);
 #endif
