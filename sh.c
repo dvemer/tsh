@@ -13,6 +13,7 @@
 #include <time.h>
 #include <sys/ucontext.h>
 #include <fcntl.h>
+#include <stdarg.h>
 #include "list.h"
 #include "sh.h"
 #include "common.h"
@@ -57,6 +58,30 @@ struct builtin_ent builtins[] = {{"cd", try_chdir}, {"help", NULL},
 				 {"exit", do_exit}, {"bg", do_bg}, {"fg", do_fg}
 				 };
 
+#ifdef	DEBUG
+#define	DEBUG_FILE	"debug.txt"
+static FILE *debug_file;
+static void init_debug(void)
+{
+	debug_file = FILE(DEBUG_FILE, "w+");
+}
+static void dbgprintf(const char *format, ...)
+{
+	va_list list;
+
+	va_start(list, format);
+	vfprintf(debug_file, format, list);
+	va_end(list);
+}
+#else
+static void init_debug(void)
+{
+}
+static void dbgprintf(const char *format, ...)
+{
+}
+#endif
+
 static struct task *get_task_in_job(struct job *job, int pid)
 {
 	struct list_head *pos;
@@ -100,9 +125,7 @@ static void hndl_chld1(int code, siginfo_t *si, void *arg)
 	struct job *job;
 
 	pid = waitpid(-1, &status, WUNTRACED | WCONTINUED);
-#ifdef DEBUG
-	printf("task %i done!\n", pid);
-#endif
+	dbgprintf("task %i done!\n", pid);
 	task = get_task(pid);
 
 	if (task == NULL) {
@@ -110,18 +133,14 @@ static void hndl_chld1(int code, siginfo_t *si, void *arg)
 	} else {
 		job = task->job;
 		if (WIFEXITED(status)) {
-#ifdef	DEBUG
-			printf("%i exited\n", pid);
-#endif
+			dbgprintf("%i exited\n", pid);
 			delete_item(&task->next);
 			free(task);
 			job->tasks_num--;
 
 			if (job->tasks_num == 0) {
 				/* job is done */
-#ifdef	DEBUG
-				printf("freeing job %i\n", job->idx);
-#endif
+				dbgprintf("freeing job %i\n", job->idx);
 				if (job->bckg == 1)
 					printf("job %i done\n", job->idx);
 
@@ -131,10 +150,8 @@ static void hndl_chld1(int code, siginfo_t *si, void *arg)
 				free(job);
 			}
 		}
-#ifdef	DEBUG
 		if (WIFSTOPPED(status))
-			printf("task %i pid stopped!\n", 0);
-#endif
+			printf("job %i task %i stopped\n", job->idx, task->pid);
 	}
 
 	tasks_num--;
@@ -158,9 +175,7 @@ static void sighup_jobs(void)
 /* SIGHUP handler */
 static void hndl_sighup(int code)
 {
-#ifdef	DEBUG
-	printf("sighup caught!\n");
-#endif
+	dbgprintf("sighup caught!\n");
 	sighup_jobs();
 	getchar();
 	exit(1);
@@ -327,9 +342,7 @@ static void parse_cmd(void)
 		curr_job->idx = get_next_idx();
 		jobs_ptrs[curr_job->idx] = curr_job;
 		list_add_tail(&curr_job->next, &jobs);
-#ifdef DEBUG
-		printf("back:%i\n", bck);
-#endif
+		dbgprintf("back:%i\n", bck);
 #ifdef DEBUG
 		dump_tasks();
 #endif
@@ -353,9 +366,7 @@ static int run_task(struct task *task)
 {
 	char *full_path;
 	pid_t pid;
-#ifdef	DEBUG
-	printf("new run task %i\n", task->idx);
-#endif
+	dbgprintf("new run task %i\n", task->idx);
 
 	if (strchr(task->name, '/') != NULL) {
 		/* name contains '/', don't scan $PATH */
@@ -394,10 +405,8 @@ static int run_task(struct task *task)
 		/* create left pipe */
 		pipe(left_pipe);
 		pid = fork();
+		dbgprintf("task %i is %i\n", task->idx, pid);
 
-#ifdef	DEBUG
-		printf ("task %i is %i\n", task->idx, pid);
-#endif
 		if (pid == -1) 
 			goto err;
 
@@ -421,9 +430,8 @@ static int run_task(struct task *task)
 		if (task->is_last == 0)
 			pipe(right_pipe);
 		pid = fork();
-#ifdef	DEBUG
-		printf ("task %i is %i\n", task->idx, pid);
-#endif
+		dbgprintf ("task %i is %i\n", task->idx, pid);
+
 		if (pid == -1) {
 			fprintf(stderr, "Failed to fork %s\n", strerror(errno));
 			exit(1);
@@ -463,9 +471,8 @@ static void exec_cmd(void)
 		struct task *task;
 
 		task = get_elem(pos, struct task, next);
-#ifdef	DEBUG
-		printf("task %i\n", task->idx);
-#endif
+		dbgprintf("task %i\n", task->idx);
+
 		if (run_task(task) == -1)
 			return;
 	}
@@ -484,11 +491,7 @@ static void try_chdir(char *cmd)
 	/* skip rest of spaces */
 	while (*space_delim == ' ') space_delim++;
 
-	if (chdir(space_delim))
-#ifdef	DEBUG
-		printf("chdir: %s\n", space_delim);
-#endif
-		
+	chdir(space_delim);
 	return;
 }
 
@@ -621,9 +624,7 @@ static void set_up_cmd(void)
 
 	prev = curr_cmd->next.prev;
 	curr_cmd = get_elem(prev, struct history_ent, next);
-#ifdef	DEBUG
-	printf("   NEW UP CURR:#%s#\n", curr_cmd->cmd_string);
-#endif
+	dbgprintf("   NEW UP CURR:#%s#\n", curr_cmd->cmd_string);
 }
 
 static void set_down_cmd(void)
@@ -635,9 +636,7 @@ static void set_down_cmd(void)
 
 	next = curr_cmd->next.next;
 	curr_cmd = get_elem(next, struct history_ent, next);
-#ifdef	DEBUG
-	printf("   NEW DOWN CURR:#%s#\n", curr_cmd->cmd_string);
-#endif
+	dbgprintf("   NEW DOWN CURR:#%s#\n", curr_cmd->cmd_string);
 }
 
 static void cmd_up_down(int action)
@@ -803,9 +802,7 @@ static void load_history(void)
 	while ((ch = fgetc(hist_file)) != EOF) {
 		if (ch == '\n') {
 			add_to_history(hist_string);
-#ifdef	DEBUG
-			printf("add to history: %s\n", hist_string);
-#endif
+			dbgprintf("add to history: %s\n", hist_string);
 			memset(hist_string, 0, max_hist_strlen);
 			pos = 0;
 			continue;
@@ -923,9 +920,9 @@ static void handle_backspace(void)
 		old_pos = cursor_pos;
 		len = strlen(cmd);
 		t_erase_line();
-		t_move_cur_back(len + 1);
+		t_move_cur_back(len + strlen(prompt));
 		memmove(&cmd[cursor_pos - 1], &cmd[cursor_pos],
-		len - cursor_pos + 1);
+			len - cursor_pos + 1);
 		print_prompt();
 		write(1, cmd, strlen(cmd));
 		t_move_cur_back(len - old_pos);
@@ -1146,6 +1143,7 @@ int main(void)
 	load_history();
 	tcsetpgrp(0, getpid());
 	set_signals();
+	init_debug();
 
 	while (1) {
 		char *p;
@@ -1180,9 +1178,7 @@ int main(void)
 			while (1) {
 				if (tasks_num == 0) {
 					tcsetpgrp(0, getpid());
-#ifdef DEBUG
-					printf("wake!\n");
-#endif
+					dbgprintf("wake!\n");
 					break;
 				} else
 					pause();
