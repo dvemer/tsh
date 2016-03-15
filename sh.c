@@ -918,21 +918,18 @@ static void handle_backspace(void)
 {
 	if (cursor_pos < strlen(cmd)) {
 		size_t len;
-		char bspace;
+		int old_pos;
 
-		bspace = '\b';
+		old_pos = cursor_pos;
 		len = strlen(cmd);
-		/* shift command string and reprint it */
+		t_erase_line();
+		t_move_cur_back(len + 1);
 		memmove(&cmd[cursor_pos - 1], &cmd[cursor_pos],
 		len - cursor_pos + 1);
-		cmd[len - 1] = '\0';
-		/* move cursor backward on pos */
-		write(1, &bspace, sizeof bspace);
-		/* erase line until it's end */
-		t_erase_end();
-		/* reprint rest of command */
-		write(1, &cmd[cursor_pos - 1], len - cursor_pos);
-		cursor_pos = strlen(cmd);
+		print_prompt();
+		write(1, cmd, strlen(cmd));
+		t_move_cur_back(len - old_pos);
+		cursor_pos--;
 	} else {
 		/* simple case, just print backspace */
 		do_backspace();
@@ -985,7 +982,7 @@ static int read_cmd(void)
 		}
 
 		/* backspace */
-		if (c == 0x7f) {
+		if (c == 0x08) {
 			if (cursor_pos)
 				handle_backspace();
 			continue;
@@ -997,11 +994,13 @@ static int read_cmd(void)
 			continue;
 		}
 
-		insert_ch(c);
-
+		/* enter key */
 		if (c == 0xA) {
+			printf("\n");
 			break;
 		}
+
+		insert_ch(c);
 	}
 
 	return 0;
