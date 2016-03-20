@@ -4,8 +4,8 @@
 #include "list.h"
 #include <time.h>
 #define FG 0x1
-#define BG 0x2
 #define DSWN 0x4 /* disown: don't send SIGHUP */
+#define	RUNNING	0x8
 
 #define MAX_JOBS 100
 #define MAX_ARGS 40
@@ -35,6 +35,7 @@ struct job {
 	int dswnd; /* 1 if disowned */
 	struct list_head tasks;
 	struct list_head next;
+	int state;
 };
 
 /* entry to execute */

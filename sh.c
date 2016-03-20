@@ -150,8 +150,10 @@ static void hndl_chld1(int code, siginfo_t *si, void *arg)
 				free(job);
 			}
 		}
-		if (WIFSTOPPED(status))
+		if (WIFSTOPPED(status)) {
 			printf("job %i task %i stopped\n", job->idx, task->pid);
+			job->state &= ~RUNNING;
+		}
 	}
 
 	tasks_num--;
@@ -209,7 +211,8 @@ static void list_jobs(char *cmd)
 		struct job *job;
 
 		job = get_elem(pos, struct job, next);
-		printf("[%i] %s\n", job->idx, job->name);
+		printf("[%i/%s/%s] %s\n", job->idx, (job->state & RUNNING) ? "run" : "stopped",
+		       (job->state & FG) ? "fg" : "bg", job->name);
 	}
 }
 
@@ -341,6 +344,11 @@ static void parse_cmd(void)
 	if (curr_job != NULL) {
 		curr_job->idx = get_next_idx();
 		jobs_ptrs[curr_job->idx] = curr_job;
+		curr_job->state = RUNNING;
+
+		if (bck == 0)
+			curr_job->state |= FG;
+
 		list_add_tail(&curr_job->next, &jobs);
 		dbgprintf("back:%i\n", bck);
 #ifdef DEBUG
@@ -497,6 +505,7 @@ static void try_chdir(char *cmd)
 
 static void do_exit(char *cmd)
 {
+	sighup_jobs();
 	exit(1);
 }
 
@@ -513,6 +522,9 @@ static void do_bg(char *cmd)
 		goto err;
 
 	/* send SIGCONT */
+        killpg(jobs_ptrs[job_idx]->pgid, SIGCONT);
+	tasks_num = 0;
+	return;
 
 err:
 	fprintf(stderr, "invalid job index\n");
@@ -523,7 +535,21 @@ static void do_fg(char *cmd)
 {
 	int job_idx;
 
-	sscanf(cmd, "fg %i", &job_idx);
+	sscanf(cmd, "bg %i", &job_idx);
+
+	if (job_idx < 0 || job_idx >= MAX_JOBS)
+		goto err;
+
+	if (jobs_ptrs[job_idx] == NULL)
+		goto err;
+
+	/* send SIGCONT */
+        killpg(jobs_ptrs[job_idx]->pgid, SIGCONT);
+	return;
+
+err:
+	fprintf(stderr, "invalid job index\n");
+	return;
 }
 
 static void try_dwn(char *cmd)
@@ -580,9 +606,6 @@ static void do_backspace(void)
 
 	write(1, bck, sizeof bck);
 }
-
-#define	CURSOR_UP	1
-#define	CURSOR_DOWN	2
 
 static void move_cur_end(void)
 {
@@ -1040,6 +1063,11 @@ static void alloc_cmd(void)
 	ASSERT_ERR ("malloc failed\n", (cmd == NULL));
 }
 
+static int bg_fg_command(char *cmd)
+{
+	return (strcmp(cmd, "bg") == 0) || (strcmp(cmd, "fg") == 0);
+}
+
 static int process_builtins(char *cmd)
 {
 	int i;
@@ -1050,11 +1078,15 @@ static int process_builtins(char *cmd)
 		if (strcmp(cmd, builtins[i].name) == 0)
 			if (builtins[i].handler != NULL) {
 				builtins[i].handler(cmd);
-				return 0;
+
+				if (bg_fg_command(cmd))
+					return 2;
+
+				return 1;
 			}
 	}
 
-	return -1;
+	return 0;
 }
 
 #ifdef	DEBUG
@@ -1147,6 +1179,7 @@ int main(void)
 
 	while (1) {
 		char *p;
+		int process_result;
 
 		print_prompt();
 
@@ -1165,13 +1198,18 @@ int main(void)
 
 		add_to_history(cmd);
 
-		if (process_builtins(cmd) == 0)
-			continue;
+		process_result = process_builtins(cmd);
 
-		/* parse arguments if needed*/
-		parse_cmd();
-		/* now exec list of commands */
-		exec_cmd();
+		if (process_result == 0) {
+			/* parse arguments if needed*/
+			parse_cmd();
+			/* now exec list of commands */
+			exec_cmd();
+		} else {
+			/* handled as builtin */
+			if (process_result == 1)
+				continue;
+		}
 
 		/* run in background */
 		if (tasks_num && bck == 0) {
