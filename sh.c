@@ -63,7 +63,7 @@ struct builtin_ent builtins[] = {{"cd", try_chdir}, {"help", NULL},
 static FILE *debug_file;
 static void init_debug(void)
 {
-	debug_file = FILE(DEBUG_FILE, "w+");
+	debug_file = fopen(DEBUG_FILE, "w+");
 }
 static void dbgprintf(const char *format, ...)
 {

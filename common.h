@@ -1,6 +1,7 @@
 #ifndef	COMMON_H
 #define	COMMON_H
 #include <sys/time.h>
+#include <string.h>
 #define	ARR_SZ(x) (sizeof (x) / sizeof (x[0]))
 static inline void print_ts(const char *s)
 {
@@ -12,6 +13,20 @@ static inline void print_ts(const char *s)
 		printf(" gettimeofday failed!\n");
 	else
 		printf(" %lu:%lu\n", tv.tv_sec, tv.tv_usec);
+}
+
+static inline int string_is_empty(const char *s)
+{
+	int i;
+
+	i = 0;
+
+	while (s[i] != '\0') {
+		if (s[i] != ' ')
+			return 0;
+	};
+
+	return 1;
 }
 
 #define PRINT_ERR_EXIT(args...) {fprintf(stderr, "[%s]:%s:%i ", __FILE__, __func__, __LINE__); fprintf(stderr, args); exit(1);}
