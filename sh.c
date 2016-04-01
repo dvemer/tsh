@@ -8,6 +8,7 @@
 #include <sys/ioctl.h>
 #include <sys/wait.h>
 #include <sys/types.h>
+#include <sys/stat.h>
 #include <dirent.h>
 #include <errno.h>
 #include <time.h>
@@ -1142,12 +1143,29 @@ err:
 }
 
 #ifdef	DEBUG_OUTPUT
-#define	OUTPUT_FILE	"output.txt"
+/*
+ * Dump all output to FIFO pipe. On the other
+ * side of pipe, reader prints data on screen
+ * and at the same time write it to file.
+ * Usage: build tsh with 'DEBUG_OUTPUT',
+ * in another terminal run the following:
+ * 'cat output.fifo | tee output.txt'.
+ * All output will be in output.txt.
+ */
+#define	OUTPUT_FIFO	"output.fifo"
 static void dup_debug_output(void)
 {
 	int output_fd;
 
-	output_fd = creat(OUTPUT_FILE, 0664);
+	if (access(OUTPUT_FIFO, F_OK)) {
+		if (mknod(OUTPUT_FIFO, S_IFIFO | 0666, 0)) {
+			fprintf(stderr, "Failed to creat fifo: %s\n", strerror(errno));
+			getchar();
+			exit(1);
+		}
+	}
+
+	output_fd = open(OUTPUT_FIFO, O_WRONLY);
 
 	if (output_fd == -1) {
 		fprintf(stderr, "Failed to open output file: %s\n", strerror(errno));
@@ -1156,6 +1174,7 @@ static void dup_debug_output(void)
 	}
 
 	setvbuf(stdout, NULL, _IONBF, 0);
+	setvbuf(stderr, NULL, _IONBF, 0);
 	dup2(output_fd, 1);
 	dup2(output_fd, 2);
 }
@@ -1168,7 +1187,6 @@ static void dup_debug_output(void)
 int main(void)
 {
 	builtins_num = ARR_SZ(builtins);
-	setvbuf(stdout, NULL, _IONBF, 0);
 	dup_debug_output();
 	init_debug_input();
 	init_autoc();

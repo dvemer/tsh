@@ -178,7 +178,7 @@ static void print_dir_with_tmpl(const char *path, const char *template)
 	};
 }
 
-static int print_file_path_ac(char *path)
+static void print_file_path_ac(char *path)
 {
 	char *last_dir;
 	char *file_template;
@@ -208,7 +208,7 @@ static int print_file_path_ac(char *path)
 		print_dir_with_tmpl(".", file_template);
 	}
 
-	return 0;
+	return;
 }
 
 /*
