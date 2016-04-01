@@ -16,7 +16,7 @@
 #define	CMD_DOWN 2
 
 struct builtin_ent {
-	const char *name;
+	char *name;
 	void (*handler)(char *cmd);
 };
 

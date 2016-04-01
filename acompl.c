@@ -11,7 +11,7 @@
 #include "common.h"
 
 #define	ALLOC_SZ	50
-static const char **bins_names_ptrs;
+static char **bins_names_ptrs;
 static int columns;
 extern struct builtin_ent builtins[];
 extern int builtins_num;
@@ -62,9 +62,16 @@ static void scan_directory(const char *path)
 		full_path = get_full_name(path, ent->d_name);
 		if (stat(full_path, &stat_info) == 0) {
 			/* file is executable */
-			if (stat_info.st_mode & S_IXUSR) {
-				add_new_binary(ent->d_name);
-			}
+			if (!(stat_info.st_mode & S_IXUSR))
+				continue;
+
+			if (strcmp(ent->d_name, ".") == 0)
+				continue;
+
+			if (strcmp(ent->d_name, "..") == 0)
+				continue;
+
+			add_new_binary(ent->d_name);
 		}
 	};
 }
@@ -97,14 +104,14 @@ static void sort_binaries(void)
 	int i;
 	int j;
 
-	for(j = 0;j < builtins_num - 1;j++) {
-		for(i = 0;i < builtins_num - j - 1;i++) {
+	for(j = 0;j < ac_ent_num - 1;j++) {
+		for(i = 0;i < ac_ent_num - j - 1;i++) {
 			int res;
 
 			res = strcmp(bins_names_ptrs[i], bins_names_ptrs[i + 1]);
 
 			if (res > 0) {
-				const char *tmp;
+				char *tmp;
 
 				tmp = bins_names_ptrs[i];
 				bins_names_ptrs[i] = bins_names_ptrs[i + 1];
@@ -164,11 +171,9 @@ static void print_dir_with_tmpl(const char *path, const char *template)
 	if (dir == NULL)
 		return;
 
+	printf("\n");
 	while ((ent = readdir(dir)) != NULL) {
-		char *full_path;
-		struct stat stat_info;
-
-		if (strstr(ent->d_name, template) == &ent->d_name[0])
+		if ((template == NULL) || strstr(ent->d_name, template) == &ent->d_name[0])
 			printf("%s\n", ent->d_name);
 	};
 }
@@ -180,25 +185,28 @@ static int print_file_path_ac(char *path)
 	size_t file_name_len;
 	struct stat stat_info;
 
-	last_dir = strrchr(path, '/');
-	file_name_len = strlen(last_dir + 1);
-
-	if (file_name_len != 0)
-		file_template = malloc(file_name_len);
-	else
-		file_template = NULL;
-
-	ASSERT_ERR("malloc failed!\n", (file_template == NULL));
-	strcpy(file_template, last_dir + 1);
-	*last_dir = '\0';
-
-	if (stat(path, &stat_info) == 0) {
-		/* path exists */
-		print_dir_with_tmpl(path, file_template);
+	if (strcmp(path, ".") == 0) {
+		print_dir_with_tmpl(".", NULL);
+		return;
 	}
 
-	if (file_template != NULL)
-		free(file_template);
+	last_dir = strrchr(path, '/');
+
+	if (last_dir != NULL) {
+		file_name_len = strlen(last_dir + 1);
+		file_template = malloc(file_name_len);
+		ASSERT_ERR("malloc failed!\n", (file_template == NULL));
+		strcpy(file_template, last_dir + 1);
+		*last_dir = '\0';
+		if (stat(path, &stat_info) == 0) {
+			/* path exists */
+			print_dir_with_tmpl(path, file_template);
+		}
+	} else {
+		file_name_len = strlen(path);
+		file_template = path;
+		print_dir_with_tmpl(".", file_template);
+	}
 
 	return 0;
 }

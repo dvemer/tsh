@@ -24,6 +24,7 @@ static inline int string_is_empty(const char *s)
 	while (s[i] != '\0') {
 		if (s[i] != ' ')
 			return 0;
+		i++;
 	};
 
 	return 1;

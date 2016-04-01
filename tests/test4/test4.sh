@@ -1,4 +1,3 @@
-gcc victim.c -o victim
 cp ../../tsh .
 ../.././run.sh&
 sleep 1
@@ -8,5 +7,3 @@ echo "PID:$TSH_PID"
 sleep 1
 echo "Passed"
 rm tsh
-rm victim
-rm output.txt

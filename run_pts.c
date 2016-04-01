@@ -7,6 +7,7 @@
 #include <unistd.h>
 #include <sys/ioctl.h>
 #include <sys/types.h>
+#include <time.h>
 
 int main(int argc,char *argv[])
 {
@@ -15,6 +16,7 @@ int main(int argc,char *argv[])
 	int tsh_pid;
         char c;
 	char pts_path[64];
+	struct timespec ts;
 
 	if (setuid(0) == -1) {
 		printf("failed to get root priv: %s\n", strerror(errno));
@@ -37,9 +39,13 @@ int main(int argc,char *argv[])
 		exit(1);
 	}
 
+	ts.tv_sec = 0;
+	ts.tv_nsec = 300000000;
+
 	while (read(input_file_fd, &c, sizeof c) == sizeof c) {
 	        printf("write %02X...", c);
 		printf("result: %i\n", ioctl(pts_file_fd, 0x5412, &c));
+		nanosleep(&ts, NULL);
 	}
 
 	printf("done!\n");

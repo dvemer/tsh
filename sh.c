@@ -230,8 +230,8 @@ static char *look_for_binary(char *path, char *name)
 	name_len = strlen(name);
 	need_slash = (path[path_len - 1] != '/');
 	/* first 1 is '/' at the end of path, second 1 is '\0' */
-	full_path = malloc(path_len + name_len + 1 + need_slash);
-	ASSERT_ERR("malloc failed\n", (full_path == NULL));
+	full_path = calloc(path_len + name_len + 1 + need_slash, 1);
+	ASSERT_ERR("calloc failed\n", (full_path == NULL));
 
 	strcpy(full_path, path);
 
@@ -982,6 +982,7 @@ static int read_cmd(void)
 				//printf("\n");
 				write(1, prompt, strlen(prompt));
 				write(1, cmd, strlen(cmd));
+				tab_cnt = 0;
 			}	
 			continue;
 		}
@@ -1129,7 +1130,7 @@ static void set_signals(void)
 	sig = "SIGCHLD";
 	memset(&sa, 0, sizeof sa);
 	sa.sa_sigaction = hndl_chld1;
-	sa.sa_flags |= (SA_SIGINFO);
+	sa.sa_flags |= (SA_SIGINFO | SA_RESTART);
 	if (sigaction(SIGCHLD, &sa, NULL) == -1)
 		goto err;
 
@@ -1156,6 +1157,7 @@ static void dup_debug_output(void)
 
 	setvbuf(stdout, NULL, _IONBF, 0);
 	dup2(output_fd, 1);
+	dup2(output_fd, 2);
 }
 #else
 static void dup_debug_output(void)
@@ -1166,6 +1168,7 @@ static void dup_debug_output(void)
 int main(void)
 {
 	builtins_num = ARR_SZ(builtins);
+	setvbuf(stdout, NULL, _IONBF, 0);
 	dup_debug_output();
 	init_debug_input();
 	init_autoc();
