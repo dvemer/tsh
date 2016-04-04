@@ -1,0 +1,21 @@
+Failed to load history file: No such file or directory
+ffh>12345678
+Can't find 12345678
+ffh>123456   qwert
+Can't find 123qwert
+ffh>123qwert
+Can't find 123qwert
+ffh>
+ffh>
+ffh>uname  me
+Linux
+ffh>
+ffh>
+ffh>uname     123qwert
+Can't find 123qwert
+ffh>
+ffh>
+ffh>
+ffh>vvvv  2222
+Can't find vv2222
+ffh>exit

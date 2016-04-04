@@ -170,8 +170,10 @@ static void sighup_jobs(void)
 
 		job = get_elem(pos, struct job, next);
 
-		if (job->dswnd == 0)
-			killpg(job->pgid, SIGHUP);
+		//if (job->dswnd == 0) {
+		//	printf("HUP %s %i\n", __func__, job->pgid);
+		//	killpg(job->pgid, SIGHUP);
+		//}
 	}
 }
 
@@ -1007,7 +1009,7 @@ static int read_cmd(void)
 		}
 
 		/* backspace */
-		if (c == 0x08) {
+		if ((c == 0x08) || (c == 0x7f)) {
 			if (cursor_pos)
 				handle_backspace();
 			continue;
