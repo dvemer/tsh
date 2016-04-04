@@ -11,6 +11,6 @@ ffh>history
 [2] uname
 [3] history
 [4] history
-ffh>uname -a
-Linux ffh-workstation 3.19.0-15-generic #15-Ubuntu SMP Thu Apr 16 23:32:37 UTC 2015 x86_64 x86_64 x86_64 GNU/Linux
+ffh>uname
+Linux
 ffh>exit

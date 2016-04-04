@@ -506,6 +506,9 @@ static void try_chdir(char *cmd)
 
 static void do_exit(char *cmd)
 {
+#ifdef	DEBUG_OUTPUT
+	remove("output.fifo");
+#endif
 	sighup_jobs();
 	exit(1);
 }

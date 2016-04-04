@@ -1,5 +1,5 @@
 [A
 history
 [A
-uname -a
+uname
 exit

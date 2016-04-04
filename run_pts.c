@@ -28,14 +28,14 @@ int main(int argc,char *argv[])
         pts_file_fd = open(pts_path, O_WRONLY);
 
         if (pts_file_fd == -1) {
-                printf("failed to open: %s\n", strerror(errno));
+                printf("failed to open pts: %s\n", strerror(errno));
 		exit(1);
 	}
 
 	input_file_fd = open(argv[2], O_RDONLY);
 
 	if (input_file_fd == -1) {
-                printf("failed to open: %s\n", strerror(errno));
+                printf("failed to open input: %s\n", strerror(errno));
 		exit(1);
 	}
 
