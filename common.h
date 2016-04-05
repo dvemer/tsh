@@ -2,6 +2,7 @@
 #define	COMMON_H
 #include <sys/time.h>
 #include <string.h>
+#include <errno.h>
 #define	ARR_SZ(x) (sizeof (x) / sizeof (x[0]))
 static inline void print_ts(const char *s)
 {
@@ -30,6 +31,7 @@ static inline int string_is_empty(const char *s)
 	return 1;
 }
 
-#define PRINT_ERR_EXIT(args...) {fprintf(stderr, "[%s]:%s:%i ", __FILE__, __func__, __LINE__); fprintf(stderr, args); exit(1);}
+#define PRINT_ERR_EXIT(args...) { fprintf(stderr, "[%s]:%s:%i %s", __FILE__, __func__, __LINE__, strerror(errno)); \
+	fprintf(stderr, args); getchar() ;exit(1);}
 #define	ASSERT_ERR(str, cond) { if (cond) { PRINT_ERR_EXIT(str);} }
 #endif

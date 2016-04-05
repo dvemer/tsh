@@ -307,6 +307,11 @@ static void print_prompt(void)
 	write(1, prompt, strlen(prompt));
 }
 
+static void print_cmd(void)
+{
+	write(1, cmd, strlen(cmd));
+}
+
 #ifdef DEBUG
 static void dump_tasks(void)
 {
@@ -751,37 +756,46 @@ static void deinit_debug_input(void)
 }
 #endif
 
+static unsigned char read_n_log(void)
+{
+	unsigned char c;
+
+	ASSERT_ERR("read failed!\n", read(0, &c, sizeof c) != 1);
+	log_input(c);
+
+	return c;
+}
+
 static int handle_ansi(void)
 {
 	unsigned char second_byte;
 
-	read(0, &second_byte, sizeof second_byte);
-	log_input(second_byte);
+	second_byte = read_n_log();
 
 	if (second_byte == '[') {
 		unsigned char cntrl_byte;
 
-		read(0, &cntrl_byte, sizeof cntrl_byte);
-		log_input(cntrl_byte);
+		cntrl_byte = read_n_log();
 
-		/* cursor up */
 		switch (cntrl_byte) {
 			case 0x41:
+				/* cursor up */
 				cmd_up_down(CMD_UP);
-				return 0;
+				break;
 			case 0x42:
+				/* cursor down */
 				cmd_up_down(CMD_DOWN);
-				return 0;
+				break;
 			case 0x43:
 				/* cursor right */
 				cursor_right();
-				return 0;
+				break;
 			case 0x44:
 				/* cursor left */
 				cursor_left();
-				return 0;
+				break;
 			default:
-				return 0;
+				;
 		}
 	}
 	return 0;
@@ -911,7 +925,7 @@ static void erase_word(void)
 	memmove(&cmd[nearest_idx], &cmd[cursor_pos], new_len);
 	t_erase_line();
 	print_prompt();
-	write(1, cmd, strlen(cmd));
+	print_cmd();
 }
 
 static void realloc_cmd(int new_cursor_pos)
@@ -922,17 +936,31 @@ static void realloc_cmd(int new_cursor_pos)
 	}
 }
 
+static void cr_reprint(void)
+{
+	t_erase_line();
+	t_move_cur_back(strlen(cmd) + strlen(prompt));
+	print_prompt();
+	print_cmd();
+}
+
 static void insert_ch(char c)
 {
 	realloc_cmd(cursor_pos + 1);
 
 	if (cursor_pos < strlen(cmd)) {
+		size_t len;
+		int old_pos;
+
+		old_pos = cursor_pos;
+		len = strlen(cmd);
 		/* insert char to command string */
 		memmove(&cmd[cursor_pos + 1], &cmd[cursor_pos],
-		strlen(cmd) - cursor_pos + 1);
+			len - cursor_pos + 1);
 		cmd[cursor_pos] = c;
-		write(1, &cmd[cursor_pos], strlen(cmd) - cursor_pos + 1);
-		cursor_pos = strlen(cmd);
+		cr_reprint();
+		t_move_cur_back(len - old_pos);
+		cursor_pos = old_pos + 1;
 	} else {
 		/* cursor at last position */
 		cmd[cursor_pos++] = c;
@@ -948,12 +976,9 @@ static void handle_backspace(void)
 
 		old_pos = cursor_pos;
 		len = strlen(cmd);
-		t_erase_line();
-		t_move_cur_back(len + strlen(prompt));
 		memmove(&cmd[cursor_pos - 1], &cmd[cursor_pos],
 			len - cursor_pos + 1);
-		print_prompt();
-		write(1, cmd, strlen(cmd));
+		cr_reprint();
 		t_move_cur_back(len - old_pos);
 		cursor_pos--;
 	} else {
@@ -963,7 +988,6 @@ static void handle_backspace(void)
 		cmd[cursor_pos] = '\0';
 	}
 }
-
 
 static int read_cmd(void)
 {
@@ -975,8 +999,7 @@ static int read_cmd(void)
 	cursor_pos = 0;
 
 	while (1) {
-		read (0, &c, sizeof c);
-		log_input(c);
+		c = read_n_log();
 
 		/* tab */
 		if (c == 0x9) {
@@ -985,9 +1008,8 @@ static int read_cmd(void)
 			if (tab_cnt == 2) {
 				/* run autocompletion */
 				print_ac(cmd);
-				//printf("\n");
-				write(1, prompt, strlen(prompt));
-				write(1, cmd, strlen(cmd));
+				print_prompt();
+				print_cmd();
 				tab_cnt = 0;
 			}	
 			continue;

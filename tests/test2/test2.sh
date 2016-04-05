@@ -11,3 +11,4 @@ if [ "$RESULT" == "" ]; then
 	echo "Passed"
 fi
 rm tsh
+rm output.txt
