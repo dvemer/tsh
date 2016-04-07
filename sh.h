@@ -15,9 +15,14 @@
 #define	CMD_UP 1
 #define	CMD_DOWN 2
 
+#define	BLTN_OK		0
+#define	BLTN_MOVE_BG	1
+#define	BLTN_MOVE_FG	2
+#define	BLTN_MISSED	3
+
 struct builtin_ent {
 	char *name;
-	void (*handler)(char *cmd);
+	int (*handler)(char *cmd);
 };
 
 struct history_ent {

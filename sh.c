@@ -44,12 +44,12 @@ static struct job *jobs_ptrs[MAX_JOBS];
 
 static struct job *curr_job;
 struct list_head jobs = {&jobs, &jobs};
-static void try_chdir(char *cmd);
-static void dump_history(char *cmd);
-static void do_exit(char *cmd);
-static void do_bg(char *cmd);
-static void do_fg(char *cmd);
-static void list_jobs(char *cmd);
+static int try_chdir(char *cmd);
+static int dump_history(char *cmd);
+static int do_exit(char *cmd);
+static int do_bg(char *cmd);
+static int do_fg(char *cmd);
+static int list_jobs(char *cmd);
 
 /* terminal parameters */
 struct termios tattr;
@@ -118,12 +118,32 @@ static struct task *get_task(int pid)
 	return NULL;
 }
 
+static void free_task(struct task *task)
+{
+	struct job *job;
+
+	job = task->job;
+	delete_item(&task->next);
+	free(task);
+	job->tasks_num--;
+
+	if (job->tasks_num == 0) {
+		/* job is done */
+		dbgprintf("freeing job %i\n", job->idx);
+		if (job->bckg == 1)
+			printf("job %i done\n", job->idx);
+		jobs_idxs[job->idx] = 0;
+		jobs_ptrs[job->idx] = NULL;
+		delete_item(&job->next);
+		free(job);
+	}
+}
+
 static void hndl_chld1(int code, siginfo_t *si, void *arg)
 {
 	int pid;
 	int status;
 	struct task *task;
-	struct job *job;
 
 	pid = waitpid(-1, &status, WUNTRACED | WCONTINUED);
 	dbgprintf("task %i done!\n", pid);
@@ -132,28 +152,21 @@ static void hndl_chld1(int code, siginfo_t *si, void *arg)
 	if (task == NULL) {
 		printf("pid %i not found in jobs...\n", pid);
 	} else {
+		struct job *job;
+
 		job = task->job;
+
 		if (WIFEXITED(status)) {
 			dbgprintf("%i exited\n", pid);
-			delete_item(&task->next);
-			free(task);
-			job->tasks_num--;
-
-			if (job->tasks_num == 0) {
-				/* job is done */
-				dbgprintf("freeing job %i\n", job->idx);
-				if (job->bckg == 1)
-					printf("job %i done\n", job->idx);
-
-				jobs_idxs[job->idx] = 0;
-				jobs_ptrs[job->idx] = NULL;
-				delete_item(&job->next);
-				free(job);
-			}
+			free_task(task);
 		}
 		if (WIFSTOPPED(status)) {
 			printf("job %i task %i stopped\n", job->idx, task->pid);
 			job->state &= ~RUNNING;
+		}
+		if (WIFSIGNALED(status)) {
+			printf("job %i terminated by %i\n", job->idx, WTERMSIG(status));
+			free_task(task);
 		}
 	}
 
@@ -204,7 +217,7 @@ static void sigsegv_action(int code, siginfo_t *si, void *ctx)
 }
 #endif
 
-static void list_jobs(char *cmd)
+static int list_jobs(char *cmd)
 {
 	struct list_head *pos;
 
@@ -217,6 +230,8 @@ static void list_jobs(char *cmd)
 		printf("[%i/%s/%s] %s\n", job->idx, (job->state & RUNNING) ? "run" : "stopped",
 		       (job->state & FG) ? "fg" : "bg", job->name);
 	}
+
+	return 0;
 }
 
 /*
@@ -412,8 +427,10 @@ static int run_task(struct task *task)
 				tcsetpgrp(0, getpid());
 			set_default_sig();
 			execve(full_path, task->args, environ);
-		} else
+		} else {
 			task->pid = pid;
+			curr_job->pgid = pid;
+		}
 		return 0;
 	}
 
@@ -494,7 +511,7 @@ static void exec_cmd(void)
 	}
 }
 
-static void try_chdir(char *cmd)
+static int try_chdir(char *cmd)
 {
 	char *space_delim;
 
@@ -502,65 +519,78 @@ static void try_chdir(char *cmd)
 	space_delim = strchr(cmd, ' ');
 
 	if (space_delim == NULL)
-		return;
+		return 0;
 
 	/* skip rest of spaces */
 	while (*space_delim == ' ') space_delim++;
 
 	chdir(space_delim);
-	return;
+	return 0;
 }
 
-static void do_exit(char *cmd)
+static int do_exit(char *cmd)
 {
 #ifdef	DEBUG_OUTPUT
 	remove("output.fifo");
 #endif
 	sighup_jobs();
 	exit(1);
+	return 0;
 }
 
-static void do_bg(char *cmd)
+static int kick_job(struct job *job, int fg)
+{
+	job->state |= RUNNING;
+
+	if (fg)
+		job->state |= FG;
+	else
+		job->state &= ~FG;
+
+	return killpg(job->pgid, SIGCONT);
+}
+
+static int job_is_valid(int job_idx)
+{
+	if (job_idx < 0 || job_idx >= MAX_JOBS)
+		return 0;
+
+	if (jobs_ptrs[job_idx] == NULL)
+		return 0;
+
+	return 1;
+}
+
+static int do_bg(char *cmd)
 {
 	int job_idx;
 
 	sscanf(cmd, "bg %i", &job_idx);
 
-	if (job_idx < 0 || job_idx >= MAX_JOBS)
-		goto err;
-
-	if (jobs_ptrs[job_idx] == NULL)
-		goto err;
-
-	/* send SIGCONT */
-        killpg(jobs_ptrs[job_idx]->pgid, SIGCONT);
+	kick_job(jobs_ptrs[job_idx], 0);
+	bck = 1;
 	tasks_num = 0;
-	return;
-
-err:
-	fprintf(stderr, "invalid job index\n");
-	return;
+	return BLTN_MOVE_BG;
 }
 
-static void do_fg(char *cmd)
+static int do_fg(char *cmd)
 {
 	int job_idx;
 
-	sscanf(cmd, "bg %i", &job_idx);
+	sscanf(cmd, "fg %i", &job_idx);
 
-	if (job_idx < 0 || job_idx >= MAX_JOBS)
-		goto err;
+	if (job_is_valid(job_idx) == 0) {
+		fprintf(stderr, "invalid job index\n");
+		return BLTN_OK;
+	}
 
-	if (jobs_ptrs[job_idx] == NULL)
-		goto err;
 
-	/* send SIGCONT */
-        killpg(jobs_ptrs[job_idx]->pgid, SIGCONT);
-	return;
-
-err:
-	fprintf(stderr, "invalid job index\n");
-	return;
+	kick_job(jobs_ptrs[job_idx], 1);
+	/* run in foreground, we are going to Zzzz */
+	bck = 0;
+	tasks_num = jobs_ptrs[job_idx]->tasks_num;
+	tcsetpgrp(0, jobs_ptrs[job_idx]->pgid);
+	return BLTN_MOVE_FG;
 }
 
 static void try_dwn(char *cmd)
@@ -869,7 +899,7 @@ err:
 	return;
 }
 
-static void dump_history(char *cmd)
+static int dump_history(char *cmd)
 {
 	struct list_head *pos;
 	int i;
@@ -883,6 +913,8 @@ static void dump_history(char *cmd)
 		printf("[%i] %s\n", i, ent->cmd_string);
 		i++;
 	}
+
+	return 0;
 }
 
 /*
@@ -1092,11 +1124,6 @@ static void alloc_cmd(void)
 	ASSERT_ERR ("malloc failed\n", (cmd == NULL));
 }
 
-static int bg_fg_command(char *cmd)
-{
-	return (strcmp(cmd, "bg") == 0) || (strcmp(cmd, "fg") == 0);
-}
-
 static int process_builtins(char *cmd)
 {
 	int i;
@@ -1113,17 +1140,11 @@ static int process_builtins(char *cmd)
 
 	for(i = 0;i < ARR_SZ(builtins);i++) {
 		if (strncmp(cmd, builtins[i].name, space_pos) == 0)
-			if (builtins[i].handler != NULL) {
-				builtins[i].handler(cmd);
-
-				if (bg_fg_command(cmd))
-					return 2;
-
-				return 1;
-			}
+			if (builtins[i].handler != NULL)
+				return builtins[i].handler(cmd);
 	}
 
-	return 0;
+	return BLTN_MISSED;
 }
 
 #ifdef	DEBUG
@@ -1256,14 +1277,14 @@ int main(void)
 
 		process_result = process_builtins(cmd);
 
-		if (process_result == 0) {
+		if (process_result == BLTN_MISSED) {
 			/* parse arguments if needed*/
 			parse_cmd();
 			/* now exec list of commands */
 			exec_cmd();
 		} else {
 			/* handled as builtin */
-			if (process_result == 1)
+			if (process_result == BLTN_OK)
 				continue;
 		}
 
