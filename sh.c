@@ -1100,11 +1100,19 @@ static int bg_fg_command(char *cmd)
 static int process_builtins(char *cmd)
 {
 	int i;
+	char *space;
+	size_t space_pos;
 
 	i = 0;
+	space = strchr(cmd, ' ');
+
+	if (space != NULL)
+		space_pos = space - cmd;
+	else
+		space_pos = strlen(cmd);
 
 	for(i = 0;i < ARR_SZ(builtins);i++) {
-		if (strcmp(cmd, builtins[i].name) == 0)
+		if (strncmp(cmd, builtins[i].name, space_pos) == 0)
 			if (builtins[i].handler != NULL) {
 				builtins[i].handler(cmd);
 
