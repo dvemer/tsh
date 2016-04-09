@@ -43,6 +43,7 @@ static int jobs_idxs[MAX_JOBS];
 static struct job *jobs_ptrs[MAX_JOBS];
 
 static struct job *curr_job;
+static struct job dummy_job;
 struct list_head jobs = {&jobs, &jobs};
 static int try_chdir(char *cmd);
 static int dump_history(char *cmd);
@@ -82,6 +83,16 @@ static void dbgprintf(const char *format, ...)
 {
 }
 #endif
+
+static void init_dummy_job(void)
+{
+	int i;
+
+	dummy_job.pgid = -1;
+
+	for(i=0;i<MAX_JOBS;i++)
+		jobs_ptrs[i] = &dummy_job;
+}
 
 static struct task *get_task_in_job(struct job *job, int pid)
 {
@@ -133,7 +144,7 @@ static void free_task(struct task *task)
 		if (job->bckg == 1)
 			printf("job %i done\n", job->idx);
 		jobs_idxs[job->idx] = 0;
-		jobs_ptrs[job->idx] = NULL;
+		jobs_ptrs[job->idx] = &dummy_job;
 		delete_item(&job->next);
 		free(job);
 	}
@@ -555,7 +566,7 @@ static int job_is_valid(int job_idx)
 	if (job_idx < 0 || job_idx >= MAX_JOBS)
 		return 0;
 
-	if (jobs_ptrs[job_idx] == NULL)
+	if (jobs_ptrs[job_idx] == &dummy_job)
 		return 0;
 
 	return 1;
@@ -599,7 +610,7 @@ static void try_dwn(char *cmd)
 
 	sscanf(cmd, "disown %i", &idx);
 
-	if (jobs_ptrs[idx] == NULL)
+	if (jobs_ptrs[idx] == &dummy_job)
 		return;
 
 	jobs_ptrs[idx]->dswnd = 1;
@@ -1253,6 +1264,7 @@ int main(void)
 	tcsetpgrp(0, getpid());
 	set_signals();
 	init_debug();
+	init_dummy_job();
 
 	while (1) {
 		char *p;
